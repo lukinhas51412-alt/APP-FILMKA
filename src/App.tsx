@@ -28,6 +28,12 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+declare global {
+  interface Window {
+    storage: any;
+  }
+}
+
 // --- Types ---
 type Role = 'pending' | 'volunteer' | 'leader' | 'admin';
 
@@ -92,15 +98,12 @@ interface Notification {
 }
 
 // --- Storage API Wrapper ---
-const Storage = {
-  async get<T>(key: string): Promise<T | null> {
+const AppStorage = {
+  async get(key: string): Promise<any | null> {
     try {
-      // @ts-ignore - window.storage is provided by the environment
-      if (typeof window === 'undefined' || !window.storage) {
-        console.warn('window.storage is not available');
+      if (typeof window === 'undefined' || !window.storage || typeof window.storage.get !== 'function') {
         return null;
       }
-      // @ts-ignore
       return await window.storage.get(key);
     } catch (e) {
       console.error(`Error getting ${key}:`, e);
@@ -109,12 +112,9 @@ const Storage = {
   },
   async set(key: string, value: any): Promise<void> {
     try {
-      // @ts-ignore
-      if (typeof window === 'undefined' || !window.storage) {
-        console.warn('window.storage is not available');
+      if (typeof window === 'undefined' || !window.storage || typeof window.storage.set !== 'function') {
         return;
       }
-      // @ts-ignore
       await window.storage.set(key, value);
     } catch (e) {
       console.error(`Error setting ${key}:`, e);
@@ -122,9 +122,7 @@ const Storage = {
   },
   async delete(key: string): Promise<void> {
     try {
-      // @ts-ignore
-      if (typeof window === 'undefined' || !window.storage) return;
-      // @ts-ignore
+      if (typeof window === 'undefined' || !window.storage || typeof window.storage.delete !== 'function') return;
       await window.storage.delete(key);
     } catch (e) {
       console.error(`Error deleting ${key}:`, e);
@@ -132,9 +130,7 @@ const Storage = {
   },
   async list(): Promise<string[]> {
     try {
-      // @ts-ignore
-      if (typeof window === 'undefined' || !window.storage) return [];
-      // @ts-ignore
+      if (typeof window === 'undefined' || !window.storage || typeof window.storage.list !== 'function') return [];
       return await window.storage.list();
     } catch (e) {
       console.error('Error listing storage:', e);
@@ -306,7 +302,10 @@ const styles: Record<string, React.CSSProperties> = {
   card: {
     backgroundColor: COLORS.white,
     borderRadius: '14px',
-    border: `1px solid ${COLORS.border}`,
+    borderTop: `1px solid ${COLORS.border}`,
+    borderBottom: `1px solid ${COLORS.border}`,
+    borderLeft: `1px solid ${COLORS.border}`,
+    borderRight: `1px solid ${COLORS.border}`,
     padding: '16px',
     marginBottom: '16px',
   },
@@ -495,6 +494,98 @@ export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeTab, setActiveTab] = useState<'calendar' | 'scales' | 'members' | 'notifs' | 'messages' | 'profile'>('scales');
+
+  // --- Utility Functions for Notifications ---
+  const parseStorageData = (raw: any) => {
+    if (!raw) return [];
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw); } catch { return []; }
+    }
+    if (raw.value && typeof raw.value === 'string') {
+      try { return JSON.parse(raw.value); } catch { return []; }
+    }
+    if (Array.isArray(raw)) return raw;
+    return [];
+  };
+
+  const buscarLideresEAdmins = async () => {
+    try {
+      const raw: any = await AppStorage.get("church-users");
+      const users = parseStorageData(raw);
+      return users
+        .filter((u: any) => u.papel === "leader" || u.papel === "admin")
+        .map((u: any) => u.id);
+    } catch {
+      return [];
+    }
+  };
+
+  const criarNotificacoes = async (userIds: string[], mensagem: string) => {
+    try {
+      if (!userIds || userIds.length === 0) return;
+
+      const raw: any = await AppStorage.get("church-notifs");
+      const existentes = parseStorageData(raw);
+
+      const novas = userIds.map((uid, i) => ({
+        id: `notif-${Date.now()}-${i}-${uid}`,
+        userId: uid,
+        mensagem,
+        data: new Date().toISOString(),
+        lida: false,
+      }));
+
+      const atualizadas = [...existentes, ...novas];
+      await AppStorage.set("church-notifs", JSON.stringify(atualizadas));
+      
+      // Update local state if the current user is among the recipients
+      if (user && userIds.includes(user.id)) {
+        const minhasNovas = novas.filter(n => n.userId === user.id);
+        setNotifications(prev => [...prev, ...minhasNovas]);
+      }
+      
+      return novas;
+    } catch (err) {
+      console.error("Erro ao criar notificações:", err);
+    }
+  };
+
+  const carregarNotificacoes = async () => {
+    if (!user) return;
+    try {
+      const raw: any = await AppStorage.get("church-notifs");
+      const todas = parseStorageData(raw);
+      const minhas = todas.filter((n: any) => n.userId === user.id);
+      setNotifications(minhas);
+    } catch (err) {
+      console.error("Erro ao carregar notificações:", err);
+      setNotifications([]);
+    }
+  };
+
+  const garantirSeedAdmin = async () => {
+    try {
+      const raw: any = await AppStorage.get("church-users");
+      const users = parseStorageData(raw);
+      const adminExiste = users.some((u: any) => u.email === "admin@ministerio.com");
+      if (!adminExiste) {
+        const seed = {
+          id: "admin-seed-001",
+          nome: "Administrador",
+          email: "admin@ministerio.com",
+          senha: "admin123",
+          papel: "admin",
+          aprovado: true,
+          areas: [],
+          dataEntrada: new Date().toISOString(),
+          dataNascimento: '1990-01-01',
+        };
+        await AppStorage.set("church-users", JSON.stringify([...users, seed]));
+      }
+    } catch (err) {
+      console.error("Erro ao garantir seed admin:", err);
+    }
+  };
   
   // Form States
   const [loginEmail, setLoginEmail] = useState('');
@@ -524,39 +615,43 @@ export default function App() {
   const AREAS = ["Filmagem — Ministério Geral", "Equipe Íris", "Corte", "Novos Membros"];
 
   useEffect(() => {
-    init();
+    garantirSeedAdmin().then(() => {
+      init();
+    });
   }, []);
 
-  const init = async () => {
+  useEffect(() => {
+    if (activeTab === "notifs") carregarNotificacoes();
+  }, [activeTab]);
+
+  const init = async (retryCount = 0) => {
     try {
-      const storedUsers = await Storage.get<User[]>('church-users') || [];
-      const storedScales = await Storage.get<Scale[]>('church-schedules') || [];
-      const storedNotifs = await Storage.get<Notification[]>('church-notifs') || [];
-      const storedPosts = await Storage.get<Post[]>('church-posts') || [];
-      const storedMessages = await Storage.get<Message[]>('church-messages') || [];
-      const storedCandidaturas = await Storage.get<any[]>('church-candidaturas') || [];
-      
-      // Seed Admin
-      const adminEmail = 'admin@ministerio.com';
-      if (!storedUsers.find(u => u.email === adminEmail)) {
-        const admin: User = {
-          id: 'admin-1',
-          nome: 'Administrador',
-          email: adminEmail,
-          senha: 'admin123',
-          papel: 'admin',
-          aprovado: true,
-          areas: ['Admin'],
-          dataNascimento: '1990-01-01',
-          dataEntrada: new Date().toISOString(),
-        };
-        storedUsers.push(admin);
-        await Storage.set('church-users', storedUsers);
+      // Wait for window.storage if it's not ready yet (max 5 retries)
+      if ((typeof window === 'undefined' || !window.storage) && retryCount < 5) {
+        setTimeout(() => init(retryCount + 1), 500);
+        return;
       }
 
+      const rawUsers: any = await AppStorage.get('church-users');
+      const storedUsers = parseStorageData(rawUsers);
+
+      const rawScales: any = await AppStorage.get('church-schedules');
+      const storedScales = parseStorageData(rawScales);
+
+      const rawNotifs: any = await AppStorage.get('church-notifs');
+      const storedNotifs = parseStorageData(rawNotifs);
+
+      const rawPosts: any = await AppStorage.get('church-posts');
+      const storedPosts = parseStorageData(rawPosts);
+
+      const rawMessages: any = await AppStorage.get('church-messages');
+      const storedMessages = parseStorageData(rawMessages);
+
+      const rawCandidaturas: any = await AppStorage.get('church-candidaturas');
+      const storedCandidaturas = parseStorageData(rawCandidaturas);
+      
       setUsers(storedUsers);
       setScales(storedScales);
-      setNotifications(storedNotifs);
       setPosts(storedPosts);
       setMessages(storedMessages);
       setCandidaturas(storedCandidaturas);
@@ -564,9 +659,11 @@ export default function App() {
       // Check if user is already logged in (simulated session)
       const session = sessionStorage.getItem('church-session');
       if (session) {
-        const u = storedUsers.find(u => u.id === session);
+        const u = storedUsers.find((u: any) => u.id === session);
         if (u) {
           setUser(u);
+          const minhasNotifs = storedNotifs.filter((n: any) => n.userId === u.id);
+          setNotifications(minhasNotifs);
           if (!u.aprovado) setScreen('waiting');
           else setScreen('dashboard');
         }
@@ -614,24 +711,10 @@ export default function App() {
 
     const updatedUsers = [...users, newUser];
     setUsers(updatedUsers);
-    await Storage.set('church-users', updatedUsers);
+    await AppStorage.set('church-users', JSON.stringify(updatedUsers));
     
-    // Notificação para líderes e admins — Novo cadastro
-    const allUsers = await Storage.get<User[]>("church-users") || [];
-    const leaders = allUsers.filter((u: any) => u.papel === "leader" || u.papel === "admin");
-
-    const allNotifs = await Storage.get<Notification[]>("church-notifs") || [];
-
-    const newNotifs = leaders.map((leader: any) => ({
-      id: Date.now().toString() + leader.id,
-      userId: leader.id,
-      mensagem: `Novo membro aguardando aprovação: ${newUser.nome}`,
-      data: new Date().toISOString(),
-      lida: false,
-    }));
-
-    await Storage.set("church-notifs", [...allNotifs, ...newNotifs]);
-    setNotifications([...allNotifs, ...newNotifs]);
+    const ids = await buscarLideresEAdmins();
+    await criarNotificacoes(ids, `Novo membro aguardando aprovação: ${newUser.nome}`);
 
     setUser(newUser);
     setScreen('waiting');
@@ -653,24 +736,10 @@ export default function App() {
 
     const updatedCandidaturas = [...candidaturas, candidatura];
     setCandidaturas(updatedCandidaturas);
-    await Storage.set('church-candidaturas', updatedCandidaturas);
+    await AppStorage.set('church-candidaturas', JSON.stringify(updatedCandidaturas));
 
-    // Notificação para líderes e admins — Nova candidatura
-    const allUsers = await Storage.get<User[]>("church-users") || [];
-    const leaders = allUsers.filter((u: any) => u.papel === "leader" || u.papel === "admin");
-
-    const allNotifs = await Storage.get<Notification[]>("church-notifs") || [];
-
-    const newNotifs = leaders.map((leader: any) => ({
-      id: Date.now().toString() + leader.id,
-      userId: leader.id,
-      mensagem: `Nova candidatura recebida de: ${candidatura.nome} — ${candidatura.email}`,
-      data: new Date().toISOString(),
-      lida: false,
-    }));
-
-    await Storage.set("church-notifs", [...allNotifs, ...newNotifs]);
-    setNotifications([...allNotifs, ...newNotifs]);
+    const ids = await buscarLideresEAdmins();
+    await criarNotificacoes(ids, `Nova candidatura recebida de: ${candidatura.nome} — ${candidatura.email}`);
 
     setIsApplyModalOpen(false);
     setIsCandidacySuccessOpen(true);
@@ -687,19 +756,6 @@ export default function App() {
     setActiveTab('scales');
   };
 
-  const createNotification = async (userId: string, mensagem: string) => {
-    const newNotif: Notification = {
-      id: Math.random().toString(36).substr(2, 9),
-      userId,
-      mensagem,
-      data: new Date().toISOString(),
-      lida: false
-    };
-    const updatedNotifs = [newNotif, ...notifications];
-    setNotifications(updatedNotifs);
-    await Storage.set('church-notifs', updatedNotifs);
-  };
-
   const handleApproveUser = async (userId: string, approve: boolean) => {
     const updatedUsers = users.map(u => {
       if (u.id === userId) {
@@ -709,15 +765,13 @@ export default function App() {
     });
     
     if (!approve) {
-      // If recused, we just remove from pending list in UI or delete? Prompt says approve/recuse.
-      // Let's just keep them as pending or remove. Let's remove for "recuse".
       const filtered = updatedUsers.filter(u => u.id !== userId);
       setUsers(filtered);
-      await Storage.set('church-users', filtered);
+      await AppStorage.set('church-users', JSON.stringify(filtered));
     } else {
       setUsers(updatedUsers);
-      await Storage.set('church-users', updatedUsers);
-      await createNotification(userId, "Seu perfil foi aprovado! Bem-vindo ao ministério.");
+      await AppStorage.set('church-users', JSON.stringify(updatedUsers));
+      await criarNotificacoes([userId], "Seu cadastro foi aprovado! Bem-vindo ao ministério.");
     }
   };
 
@@ -730,13 +784,23 @@ export default function App() {
       return u;
     });
     setUsers(updatedUsers);
-    await Storage.set('church-users', updatedUsers);
+    await AppStorage.set('church-users', JSON.stringify(updatedUsers));
   };
 
-  const handleMarkNotifRead = async (id: string) => {
-    const updated = notifications.map(n => n.id === id ? { ...n, lida: true } : n);
-    setNotifications(updated);
-    await Storage.set('church-notifs', updated);
+  const handleMarkNotifRead = async (notifId: string) => {
+    try {
+      const raw: any = await AppStorage.get("church-notifs");
+      const todas = parseStorageData(raw);
+      const atualizadas = todas.map((n: any) =>
+        n.id === notifId ? { ...n, lida: true } : n
+      );
+      await AppStorage.set("church-notifs", JSON.stringify(atualizadas));
+      setNotifications(prev => prev.map(n =>
+        n.id === notifId ? { ...n, lida: true } : n
+      ));
+    } catch (err) {
+      console.error("Erro ao marcar notificação como lida:", err);
+    }
   };
 
   const handleNavigateToMembers = () => {
@@ -774,11 +838,11 @@ export default function App() {
       for (const vid of designated) {
         const posName = Object.keys(pos).find(key => pos[key] === vid);
         const formattedPos = posName === 'corte' ? 'Corte' : posName?.replace('camera', 'Câmera ');
-        await createNotification(vid, `Você foi escalado para: ${scaleData.titulo} em ${new Date(scaleData.data).toLocaleDateString('pt-BR')} às ${scaleData.horario} na posição ${formattedPos}.`);
+        await criarNotificacoes([vid], `Você foi escalado: ${scaleData.titulo} — ${scaleData.data} às ${scaleData.horario} | Posição: ${formattedPos}`);
       }
     }
     setScales(updatedScales);
-    await Storage.set('church-schedules', updatedScales);
+    await AppStorage.set('church-schedules', JSON.stringify(updatedScales));
     setIsScaleModalOpen(false);
     setEditingScale(null);
   };
@@ -787,7 +851,7 @@ export default function App() {
     if (confirm('Deseja excluir esta escala?')) {
       const updated = scales.filter(s => s.id !== id);
       setScales(updated);
-      await Storage.set('church-schedules', updated);
+      await AppStorage.set('church-schedules', JSON.stringify(updated));
     }
   };
 
@@ -799,13 +863,7 @@ export default function App() {
       return s;
     });
     setScales(updated);
-    await Storage.set('church-schedules', updated);
-  };
-
-  const markNotifAsRead = async (id: string) => {
-    const updated = notifications.map(n => n.id === id ? { ...n, lida: true } : n);
-    setNotifications(updated);
-    await Storage.set('church-notifs', updated);
+    await AppStorage.set('church-schedules', JSON.stringify(updated));
   };
 
   const handlePost = async (conteudo: string) => {
@@ -821,14 +879,13 @@ export default function App() {
     };
     const updatedPosts = [newPost, ...posts];
     setPosts(updatedPosts);
-    await Storage.set('church-posts', updatedPosts);
+    await AppStorage.set('church-posts', JSON.stringify(updatedPosts));
     
     // Notify all approved members
     const approvedUsers = users.filter(u => u.aprovado);
-    for (const u of approvedUsers) {
-      if (u.id !== user!.id) {
-        await createNotification(u.id, `Novo aviso de ${user!.nome}: ${conteudo.substring(0, 50)}...`);
-      }
+    const idsToNotify = approvedUsers.filter(u => u.id !== user!.id).map(u => u.id);
+    if (idsToNotify.length > 0) {
+      await criarNotificacoes(idsToNotify, `Novo aviso de ${user!.nome}: ${conteudo.substring(0, 50)}...`);
     }
   };
 
@@ -845,14 +902,14 @@ export default function App() {
       return p;
     });
     setPosts(updated);
-    await Storage.set('church-posts', updated);
+    await AppStorage.set('church-posts', JSON.stringify(updated));
   };
 
   const handleDeletePost = async (id: string) => {
     if (confirm('Deseja excluir este post?')) {
       const updated = posts.filter(p => p.id !== id);
       setPosts(updated);
-      await Storage.set('church-posts', updated);
+      await AppStorage.set('church-posts', JSON.stringify(updated));
     }
   };
 
@@ -864,7 +921,7 @@ export default function App() {
       return p;
     });
     setPosts(updated);
-    await Storage.set('church-posts', updated);
+    await AppStorage.set('church-posts', JSON.stringify(updated));
   };
 
   const handleSendMessage = async (destinatarioId: string, conteudo: string, isSystem = false, senderIdOverride?: string) => {
@@ -879,7 +936,7 @@ export default function App() {
     };
     const updatedMessages = [...messages, newMessage];
     setMessages(updatedMessages);
-    await Storage.set('church-messages', updatedMessages);
+    await AppStorage.set('church-messages', JSON.stringify(updatedMessages));
   };
 
   const handleReactToMessage = async (messageId: string, emoji: string) => {
@@ -890,7 +947,7 @@ export default function App() {
       return m;
     });
     setMessages(updatedMessages);
-    await Storage.set('church-messages', updatedMessages);
+    await AppStorage.set('church-messages', JSON.stringify(updatedMessages));
   };
 
   const markMessagesAsRead = async (otherUserId: string) => {
@@ -901,15 +958,17 @@ export default function App() {
       return m;
     });
     setMessages(updated);
-    await Storage.set('church-messages', updated);
+    await AppStorage.set('church-messages', JSON.stringify(updated));
   };
 
   const checkAutoFails = async (currentScales: Scale[]) => {
     if (!user) return;
     const now = new Date();
     let changed = false;
-    const updatedScales = currentScales.map(s => {
-      // Parse data e horário. Formato esperado: data: "YYYY-MM-DD", horario: "HH:MM"
+    const updatedScales = [...currentScales];
+    
+    for (let i = 0; i < updatedScales.length; i++) {
+      const s = updatedScales[i];
       const [year, month, day] = s.data.split('-').map(Number);
       const [hour, minute] = s.horario.split(':').map(Number);
       const scaleDateTime = new Date(year, month - 1, day, hour, minute);
@@ -921,12 +980,13 @@ export default function App() {
       let scaleChanged = false;
       const newConfirmacoes = { ...s.confirmacoes };
       
-      Object.values(s.posicoes).forEach(userId => {
+      const posicoesValues = Object.values(s.posicoes);
+      for (const userId of posicoesValues) {
         if (userId && !newConfirmacoes[userId] && diffInHours < 24 && diffInHours > -1) {
           newConfirmacoes[userId] = 'furou';
           scaleChanged = true;
           changed = true;
-          createNotification(userId, `Aviso: Sua escala em "${s.titulo}" foi marcada como 'furou' automaticamente por falta de confirmação em menos de 24h.`);
+          await criarNotificacoes([userId], `Sua presença na escala "${s.titulo}" foi marcada como falta por ausência de confirmação.`);
           
           // Send system message in chat
           const leader = users.find(u => u.papel === 'leader' || u.papel === 'admin');
@@ -934,15 +994,16 @@ export default function App() {
             handleSendMessage(leader.id, "Solicitação de revisão de status enviada", true, userId);
           }
         }
-      });
+      }
       
-      if (scaleChanged) return { ...s, confirmacoes: newConfirmacoes };
-      return s;
-    });
+      if (scaleChanged) {
+        updatedScales[i] = { ...s, confirmacoes: newConfirmacoes };
+      }
+    }
 
     if (changed) {
       setScales(updatedScales);
-      await Storage.set('church-schedules', updatedScales);
+      await AppStorage.set('church-schedules', JSON.stringify(updatedScales));
     }
   };
 
@@ -960,7 +1021,15 @@ export default function App() {
         <motion.div 
           animate={{ rotate: 360 }} 
           transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-          style={{ width: '40px', height: '40px', border: `4px solid ${COLORS.border}`, borderTopColor: COLORS.black, borderRadius: '50%' }}
+          style={{ 
+            width: '40px', 
+            height: '40px', 
+            borderTop: `4px solid ${COLORS.black}`,
+            borderBottom: `4px solid ${COLORS.border}`,
+            borderLeft: `4px solid ${COLORS.border}`,
+            borderRight: `4px solid ${COLORS.border}`,
+            borderRadius: '50%' 
+          }}
         />
       </div>
     );
@@ -1414,9 +1483,11 @@ const AvisosTab = ({ posts, notifications, user, users, onPost, onDeletePost, on
               fontSize: '14px', 
               fontWeight: 600, 
               color: activeSubTab === 'posts' ? COLORS.black : COLORS.gray,
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
               borderBottom: activeSubTab === 'posts' ? `2px solid ${COLORS.black}` : 'none',
               background: 'none',
-              border: 'none',
               cursor: 'pointer',
               position: 'relative'
             }}
@@ -1431,9 +1502,11 @@ const AvisosTab = ({ posts, notifications, user, users, onPost, onDeletePost, on
               fontSize: '14px', 
               fontWeight: 600, 
               color: activeSubTab === 'notifs' ? COLORS.black : COLORS.gray,
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
               borderBottom: activeSubTab === 'notifs' ? `2px solid ${COLORS.black}` : 'none',
               background: 'none',
-              border: 'none',
               cursor: 'pointer',
               position: 'relative'
             }}
@@ -2065,13 +2138,13 @@ const ProfileTab = ({ user, users, setUsers, setUser, onLogout }: { user: User, 
       const updatedUsers = users.map(u => u.id === user?.id ? { ...u, fotoPerfil: url } : u);
       setUsers(updatedUsers);
       setUser({ ...user!, fotoPerfil: url });
-      await Storage.set('church-users', updatedUsers);
+      await AppStorage.set('church-users', JSON.stringify(updatedUsers));
     }
   };
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
-      <div style={{ ...styles.card, backgroundColor: COLORS.black, color: 'white', textAlign: 'center', padding: '30px 20px' }}>
+      <div style={{ ...styles.card, backgroundColor: COLORS.black, color: 'white', textAlign: 'center', padding: '30px 20px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: 'none' }}>
         <div style={{ position: 'relative', width: '100px', height: '100px', margin: '0 auto 16px' }}>
           <div style={{ width: '100%', height: '100%', borderRadius: '50%', backgroundColor: COLORS.gray, overflow: 'hidden', border: '3px solid rgba(255,255,255,0.2)' }}>
             {user?.fotoPerfil ? <img src={user.fotoPerfil} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" /> : <UserIcon size={50} style={{ margin: '22px' }} />}
