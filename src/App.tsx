@@ -505,6 +505,14 @@ export default function App() {
   const [regNasc, setRegNasc] = useState('');
   const [regAreas, setRegAreas] = useState<string[]>([]);
   
+  // Candidacy Form States
+  const [applyNome, setApplyNome] = useState('');
+  const [applyEmail, setApplyEmail] = useState('');
+  const [applyMensagem, setApplyMensagem] = useState('');
+  const [candidaturas, setCandidaturas] = useState<any[]>([]);
+  const [selectedCandidacy, setSelectedCandidacy] = useState<any>(null);
+  const [isCandidacyModalOpen, setIsCandidacyModalOpen] = useState(false);
+  
   // Modal States
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
   const [isCandidacySuccessOpen, setIsCandidacySuccessOpen] = useState(false);
@@ -526,13 +534,15 @@ export default function App() {
       const storedNotifs = await Storage.get<Notification[]>('church-notifs') || [];
       const storedPosts = await Storage.get<Post[]>('church-posts') || [];
       const storedMessages = await Storage.get<Message[]>('church-messages') || [];
+      const storedCandidaturas = await Storage.get<any[]>('church-candidaturas') || [];
       
       // Seed Admin
-      if (!storedUsers.find(u => u.email === 'admin@ministerio.com')) {
+      const adminEmail = 'admin@ministerio.com';
+      if (!storedUsers.find(u => u.email === adminEmail)) {
         const admin: User = {
           id: 'admin-1',
           nome: 'Administrador',
-          email: 'admin@ministerio.com',
+          email: adminEmail,
           senha: 'admin123',
           papel: 'admin',
           aprovado: true,
@@ -549,6 +559,7 @@ export default function App() {
       setNotifications(storedNotifs);
       setPosts(storedPosts);
       setMessages(storedMessages);
+      setCandidaturas(storedCandidaturas);
       
       // Check if user is already logged in (simulated session)
       const session = sessionStorage.getItem('church-session');
@@ -604,8 +615,69 @@ export default function App() {
     const updatedUsers = [...users, newUser];
     setUsers(updatedUsers);
     await Storage.set('church-users', updatedUsers);
+    
+    // Notificação para líderes e admins — Novo cadastro
+    const allUsers = await Storage.get<User[]>("church-users") || [];
+    const leaders = allUsers.filter((u: any) => u.papel === "leader" || u.papel === "admin");
+
+    const allNotifs = await Storage.get<Notification[]>("church-notifs") || [];
+
+    const newNotifs = leaders.map((leader: any) => ({
+      id: Date.now().toString() + leader.id,
+      userId: leader.id,
+      mensagem: `Novo membro aguardando aprovação: ${newUser.nome}`,
+      data: new Date().toISOString(),
+      lida: false,
+    }));
+
+    await Storage.set("church-notifs", [...allNotifs, ...newNotifs]);
+    setNotifications([...allNotifs, ...newNotifs]);
+
     setUser(newUser);
     setScreen('waiting');
+  };
+
+  const handleApply = async () => {
+    if (!applyNome || !applyEmail || !applyMensagem) {
+      alert('Preencha todos os campos da candidatura.');
+      return;
+    }
+
+    const candidatura = {
+      id: Math.random().toString(36).substr(2, 9),
+      nome: applyNome,
+      email: applyEmail,
+      mensagem: applyMensagem,
+      data: new Date().toISOString()
+    };
+
+    const updatedCandidaturas = [...candidaturas, candidatura];
+    setCandidaturas(updatedCandidaturas);
+    await Storage.set('church-candidaturas', updatedCandidaturas);
+
+    // Notificação para líderes e admins — Nova candidatura
+    const allUsers = await Storage.get<User[]>("church-users") || [];
+    const leaders = allUsers.filter((u: any) => u.papel === "leader" || u.papel === "admin");
+
+    const allNotifs = await Storage.get<Notification[]>("church-notifs") || [];
+
+    const newNotifs = leaders.map((leader: any) => ({
+      id: Date.now().toString() + leader.id,
+      userId: leader.id,
+      mensagem: `Nova candidatura recebida de: ${candidatura.nome} — ${candidatura.email}`,
+      data: new Date().toISOString(),
+      lida: false,
+    }));
+
+    await Storage.set("church-notifs", [...allNotifs, ...newNotifs]);
+    setNotifications([...allNotifs, ...newNotifs]);
+
+    setIsApplyModalOpen(false);
+    setIsCandidacySuccessOpen(true);
+    setApplyNome('');
+    setApplyEmail('');
+    setApplyMensagem('');
+    setTimeout(() => setIsCandidacySuccessOpen(false), 4000);
   };
 
   const handleLogout = () => {
@@ -659,6 +731,28 @@ export default function App() {
     });
     setUsers(updatedUsers);
     await Storage.set('church-users', updatedUsers);
+  };
+
+  const handleMarkNotifRead = async (id: string) => {
+    const updated = notifications.map(n => n.id === id ? { ...n, lida: true } : n);
+    setNotifications(updated);
+    await Storage.set('church-notifs', updated);
+  };
+
+  const handleNavigateToMembers = () => {
+    setActiveTab('members');
+  };
+
+  const handleViewCandidacy = (mensagem: string) => {
+    // Extract email from message: "Nova candidatura recebida de: [nome] — [email]"
+    const parts = mensagem.split(' — ');
+    if (parts.length < 2) return;
+    const email = parts[1].trim();
+    const cand = candidaturas.find(c => c.email === email);
+    if (cand) {
+      setSelectedCandidacy(cand);
+      setIsCandidacyModalOpen(true);
+    }
   };
 
   const handleSaveScale = async (scaleData: any) => {
@@ -892,17 +986,18 @@ export default function App() {
 
       <Modal isOpen={isApplyModalOpen} onClose={() => setIsApplyModalOpen(false)} title="Candidatura">
         <p style={{ color: COLORS.gray, fontSize: '14px', marginBottom: '20px' }}>Deixe seu interesse em participar do nosso ministério.</p>
-        <Input label="Nome completo" placeholder="Seu nome" />
-        <Input label="Email" placeholder="seu@email.com" />
+        <Input label="Nome completo" placeholder="Seu nome" value={applyNome} onChange={setApplyNome} />
+        <Input label="Email" placeholder="seu@email.com" value={applyEmail} onChange={setApplyEmail} />
         <div style={{ marginBottom: '20px' }}>
           <label style={styles.label}>Mensagem</label>
-          <textarea style={{ ...styles.input, height: '100px', resize: 'none' }} placeholder="Por que você quer participar?" />
+          <textarea 
+            style={{ ...styles.input, height: '100px', resize: 'none' }} 
+            placeholder="Por que você quer participar?" 
+            value={applyMensagem}
+            onChange={(e) => setApplyMensagem(e.target.value)}
+          />
         </div>
-        <Button onClick={() => { 
-          setIsApplyModalOpen(false); 
-          setIsCandidacySuccessOpen(true);
-          setTimeout(() => setIsCandidacySuccessOpen(false), 4000);
-        }} style={{ width: '100%' }}>Enviar Interesse</Button>
+        <Button onClick={handleApply} style={{ width: '100%' }}>Enviar Interesse</Button>
       </Modal>
 
       <CandidacySuccessModal isOpen={isCandidacySuccessOpen} onClose={() => setIsCandidacySuccessOpen(false)} />
@@ -1001,6 +1096,8 @@ export default function App() {
   const renderDashboard = () => {
     const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
     const unreadPostsCount = posts.filter(p => user && !p.lida.includes(user.id)).length;
+    const unreadNotifsCount = notifications.filter(n => user && n.userId === user.id && !n.lida).length;
+    const totalUnreadAvisos = unreadPostsCount + unreadNotifsCount;
     const unreadMessagesCount = messages.filter(m => m.destinatarioId === user?.id && !m.lida).length;
     
     return (
@@ -1048,12 +1145,16 @@ export default function App() {
           {activeTab === 'notifs' && (
             <AvisosTab 
               posts={posts} 
+              notifications={notifications}
               user={user!} 
               users={users}
               onPost={handlePost} 
               onDeletePost={handleDeletePost} 
               onMarkRead={markPostAsRead} 
+              onMarkNotifRead={handleMarkNotifRead}
               onToggleLike={handleToggleLike}
+              onNavigateToMembers={handleNavigateToMembers}
+              onViewCandidacy={handleViewCandidacy}
             />
           )}
           {activeTab === 'messages' && (
@@ -1097,7 +1198,7 @@ export default function App() {
           <div style={{ ...styles.navItem, ...(activeTab === 'notifs' ? styles.navItemActive : {}) }} onClick={() => setActiveTab('notifs')}>
             <Bell size={24} />
             <span style={styles.navLabel}>Avisos</span>
-            {unreadPostsCount > 0 && <span style={styles.badge}>{unreadPostsCount}</span>}
+            {totalUnreadAvisos > 0 && <span style={styles.badge}>{totalUnreadAvisos}</span>}
           </div>
           {user?.papel !== 'pending' && (
             <div style={{ ...styles.navItem, ...(activeTab === 'messages' ? styles.navItemActive : {}) }} onClick={() => setActiveTab('messages')}>
@@ -1272,11 +1373,15 @@ const CalendarTab = ({ scales, user, users, onOpenRanking }: { scales: Scale[], 
   );
 };
 
-const AvisosTab = ({ posts, user, users, onPost, onDeletePost, onMarkRead, onToggleLike }: any) => {
+const AvisosTab = ({ posts, notifications, user, users, onPost, onDeletePost, onMarkRead, onMarkNotifRead, onToggleLike, onNavigateToMembers, onViewCandidacy }: any) => {
+  const [activeSubTab, setActiveSubTab] = useState<'posts' | 'notifs'>('posts');
   const [newPost, setNewPost] = useState('');
   const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
 
   const sortedPosts = [...posts].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+  
+  const unreadPostsCount = posts.filter((p: any) => !p.lida.includes(user.id)).length;
+  const unreadNotifsCount = notifications.filter((n: any) => n.userId === user.id && !n.lida).length;
 
   const getRelativeTime = (dateStr: string) => {
     const now = new Date();
@@ -1301,64 +1406,115 @@ const AvisosTab = ({ posts, user, users, onPost, onDeletePost, onMarkRead, onTog
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       {isAdminOrLeader && (
-        <div style={{ ...styles.card, padding: '16px', marginBottom: '20px' }}>
-          <textarea 
-            value={newPost}
-            onChange={(e) => setNewPost(e.target.value)}
-            placeholder="O que está acontecendo?"
-            style={{ ...styles.input, height: '80px', resize: 'none', border: 'none', backgroundColor: 'transparent', padding: 0, marginBottom: '12px' }}
-          />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: `1px solid ${COLORS.border}`, paddingTop: '12px' }}>
-            <Button 
-              onClick={() => { onPost(newPost); setNewPost(''); }} 
-              disabled={!newPost.trim()}
-              style={{ padding: '8px 20px', fontSize: '14px' }}
-            >
-              Publicar
-            </Button>
-          </div>
+        <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', borderBottom: `1px solid ${COLORS.border}` }}>
+          <button 
+            onClick={() => setActiveSubTab('posts')}
+            style={{ 
+              padding: '10px 0', 
+              fontSize: '14px', 
+              fontWeight: 600, 
+              color: activeSubTab === 'posts' ? COLORS.black : COLORS.gray,
+              borderBottom: activeSubTab === 'posts' ? `2px solid ${COLORS.black}` : 'none',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              position: 'relative'
+            }}
+          >
+            Avisos
+            {unreadPostsCount > 0 && <span style={{ ...styles.badge, position: 'absolute', top: '0', right: '-15px', fontSize: '10px', width: '16px', height: '16px' }}>{unreadPostsCount}</span>}
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('notifs')}
+            style={{ 
+              padding: '10px 0', 
+              fontSize: '14px', 
+              fontWeight: 600, 
+              color: activeSubTab === 'notifs' ? COLORS.black : COLORS.gray,
+              borderBottom: activeSubTab === 'notifs' ? `2px solid ${COLORS.black}` : 'none',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              position: 'relative'
+            }}
+          >
+            Notificações
+            {unreadNotifsCount > 0 && <span style={{ ...styles.badge, position: 'absolute', top: '0', right: '-15px', fontSize: '10px', width: '16px', height: '16px' }}>{unreadNotifsCount}</span>}
+          </button>
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {sortedPosts.map((post) => {
-          const isRead = post.lida.includes(user.id);
-          return (
-            <div 
-              key={post.id} 
-              onClick={() => onMarkRead(post.id)}
-              style={{ 
-                display: 'flex', 
-                gap: '12px', 
-                padding: '16px', 
-                borderBottom: `1px solid ${COLORS.border}`,
-                cursor: 'pointer',
-                backgroundColor: isRead ? 'transparent' : 'rgba(26, 107, 60, 0.05)'
-              }}
-            >
-              <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: COLORS.lightGray, overflow: 'hidden', flexShrink: 0 }}>
-                {post.autorFoto ? <img src={post.autorFoto} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" /> : <UserIcon size={20} style={{ margin: '10px' }} />}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 700, fontSize: '15px' }}>{post.autorNome}</span>
-                    <span style={{ color: COLORS.gray, fontSize: '12px', backgroundColor: COLORS.lightGray, padding: '1px 6px', borderRadius: '4px' }}>{getAutorFuncao(post.autorId)}</span>
-                    <span style={{ color: COLORS.gray, fontSize: '13px' }}>· {getRelativeTime(post.data)}</span>
-                  </div>
-                  {isAdminOrLeader && post.autorId === user.id && (
-                    <button onClick={(e) => { e.stopPropagation(); onDeletePost(post.id); }} style={{ background: 'none', border: 'none', color: COLORS.gray, cursor: 'pointer' }}>
-                      <Trash2 size={16} />
-                    </button>
-                  )}
-                </div>
-                <p style={{ fontSize: '15px', lineHeight: '1.4', color: COLORS.black }}>{post.conteudo}</p>
-                <LikeButton post={post} currentUserId={user.id} onToggle={onToggleLike} />
+      {activeSubTab === 'posts' ? (
+        <>
+          {isAdminOrLeader && (
+            <div style={{ ...styles.card, padding: '16px', marginBottom: '20px' }}>
+              <textarea 
+                value={newPost}
+                onChange={(e) => setNewPost(e.target.value)}
+                placeholder="O que está acontecendo?"
+                style={{ ...styles.input, height: '80px', resize: 'none', border: 'none', backgroundColor: 'transparent', padding: 0, marginBottom: '12px' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: `1px solid ${COLORS.border}`, paddingTop: '12px' }}>
+                <Button 
+                  onClick={() => { onPost(newPost); setNewPost(''); }} 
+                  disabled={!newPost.trim()}
+                  style={{ padding: '8px 20px', fontSize: '14px' }}
+                >
+                  Publicar
+                </Button>
               </div>
             </div>
-          );
-        })}
-      </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {sortedPosts.map((post) => {
+              const isRead = post.lida.includes(user.id);
+              return (
+                <div 
+                  key={post.id} 
+                  onClick={() => onMarkRead(post.id)}
+                  style={{ 
+                    display: 'flex', 
+                    gap: '12px', 
+                    padding: '16px', 
+                    borderBottom: `1px solid ${COLORS.border}`,
+                    cursor: 'pointer',
+                    backgroundColor: isRead ? 'transparent' : 'rgba(26, 107, 60, 0.05)'
+                  }}
+                >
+                  <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: COLORS.lightGray, overflow: 'hidden', flexShrink: 0 }}>
+                    {post.autorFoto ? <img src={post.autorFoto} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" /> : <UserIcon size={20} style={{ margin: '10px' }} />}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, fontSize: '15px' }}>{post.autorNome}</span>
+                        <span style={{ color: COLORS.gray, fontSize: '12px', backgroundColor: COLORS.lightGray, padding: '1px 6px', borderRadius: '4px' }}>{getAutorFuncao(post.autorId)}</span>
+                        <span style={{ color: COLORS.gray, fontSize: '13px' }}>· {getRelativeTime(post.data)}</span>
+                      </div>
+                      {isAdminOrLeader && post.autorId === user.id && (
+                        <button onClick={(e) => { e.stopPropagation(); onDeletePost(post.id); }} style={{ background: 'none', border: 'none', color: COLORS.gray, cursor: 'pointer' }}>
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                    <p style={{ fontSize: '15px', lineHeight: '1.4', color: COLORS.black }}>{post.conteudo}</p>
+                    <LikeButton post={post} currentUserId={user.id} onToggle={onToggleLike} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <NotifsTab 
+          notifications={notifications} 
+          user={user} 
+          onMarkAsRead={onMarkNotifRead} 
+          onNavigateToMembers={onNavigateToMembers}
+          onViewCandidacy={onViewCandidacy}
+        />
+      )}
     </div>
   );
 };
@@ -1868,7 +2024,7 @@ const MembersTab = ({ users, currentUser, onApprove, onPromote }: { users: User[
   );
 };
 
-const NotifsTab = ({ notifications, user, onMarkAsRead }: { notifications: Notification[], user: User, onMarkAsRead: any }) => {
+const NotifsTab = ({ notifications, user, onMarkAsRead, onNavigateToMembers, onViewCandidacy }: { notifications: Notification[], user: User, onMarkAsRead: any, onNavigateToMembers: any, onViewCandidacy: any }) => {
   const myNotifs = notifications.filter(n => n.userId === user?.id);
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
@@ -1882,7 +2038,19 @@ const NotifsTab = ({ notifications, user, onMarkAsRead }: { notifications: Notif
             style={{ ...styles.card, opacity: n.lida ? 0.6 : 1, borderLeft: n.lida ? `1px solid ${COLORS.border}` : `4px solid ${COLORS.black}`, cursor: 'pointer' }}
           >
             <p style={{ fontSize: '14px', lineHeight: '1.4', marginBottom: '8px' }}>{n.mensagem}</p>
-            <p style={{ fontSize: '11px', color: COLORS.gray }}>{new Date(n.data).toLocaleString('pt-BR')}</p>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {n.mensagem.includes("Novo membro") && (
+                <Button variant="secondary" onClick={(e: any) => { e.stopPropagation(); onNavigateToMembers(); }} style={{ fontSize: '12px', padding: '4px 12px' }}>
+                  Ver pendentes
+                </Button>
+              )}
+              {n.mensagem.includes("Nova candidatura") && (
+                <Button variant="secondary" onClick={(e: any) => { e.stopPropagation(); onViewCandidacy(n.mensagem); }} style={{ fontSize: '12px', padding: '4px 12px' }}>
+                  Ver candidatura
+                </Button>
+              )}
+            </div>
+            <p style={{ fontSize: '11px', color: COLORS.gray, marginTop: '8px' }}>{new Date(n.data).toLocaleString('pt-BR')}</p>
           </div>
         ))
       )}
