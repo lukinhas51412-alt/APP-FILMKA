@@ -97,49 +97,367 @@ interface Notification {
   lida: boolean;
 }
 
-// --- Storage API Wrapper ---
-const AppStorage = {
-  async get(key: string): Promise<any | null> {
+// --- Database Layer ---
+const DB = {
+  // Chaves do banco
+  KEYS: {
+    USERS:        "church-users",
+    SCHEDULES:    "church-schedules",
+    NOTIFS:       "church-notifs",
+    POSTS:        "church-posts",
+    MESSAGES:     "church-messages",
+    CANDIDATURAS: "church-candidaturas",
+    SESSION:      "church-session",
+  },
+
+  // Leitura segura — sempre retorna array ou objeto conforme esperado
+  async get(key: string, fallback = []) {
     try {
-      if (typeof window === 'undefined' || !window.storage || typeof window.storage.get !== 'function') {
-        return null;
-      }
-      return await window.storage.get(key);
-    } catch (e) {
-      console.error(`Error getting ${key}:`, e);
-      return null;
+      const raw = await window.storage.get(key);
+      if (!raw?.value) return fallback;
+      const parsed = JSON.parse(raw.value);
+      return parsed ?? fallback;
+    } catch (err) {
+      console.error(`[DB] Erro ao ler "${key}":`, err);
+      return fallback;
     }
   },
-  async set(key: string, value: any): Promise<void> {
+
+  // Escrita segura — serializa e salva
+  async set(key: string, value: any) {
     try {
-      if (typeof window === 'undefined' || !window.storage || typeof window.storage.set !== 'function') {
-        return;
-      }
-      await window.storage.set(key, value);
-    } catch (e) {
-      console.error(`Error setting ${key}:`, e);
+      await window.storage.set(key, JSON.stringify(value));
+      return true;
+    } catch (err) {
+      console.error(`[DB] Erro ao salvar "${key}":`, err);
+      return false;
     }
   },
-  async delete(key: string): Promise<void> {
+
+  // Deleção segura
+  async delete(key: string) {
     try {
-      if (typeof window === 'undefined' || !window.storage || typeof window.storage.delete !== 'function') return;
       await window.storage.delete(key);
-    } catch (e) {
-      console.error(`Error deleting ${key}:`, e);
+      return true;
+    } catch (err) {
+      console.error(`[DB] Erro ao deletar "${key}":`, err);
+      return false;
     }
   },
-  async list(): Promise<string[]> {
+
+  // Helpers específicos por entidade
+  async getUsers()        { return this.get(this.KEYS.USERS,        []); },
+  async getSchedules()    { return this.get(this.KEYS.SCHEDULES,    []); },
+  async getNotifs()       { return this.get(this.KEYS.NOTIFS,       []); },
+  async getPosts()        { return this.get(this.KEYS.POSTS,        []); },
+  async getMessages()     { return this.get(this.KEYS.MESSAGES,     []); },
+  async getCandidaturas() { return this.get(this.KEYS.CANDIDATURAS, []); },
+  async getSession()      { return this.get(this.KEYS.SESSION,      null); },
+
+  async setUsers(data: any)        { return this.set(this.KEYS.USERS,        data); },
+  async setSchedules(data: any)    { return this.set(this.KEYS.SCHEDULES,    data); },
+  async setNotifs(data: any)       { return this.set(this.KEYS.NOTIFS,       data); },
+  async setPosts(data: any)        { return this.set(this.KEYS.POSTS,        data); },
+  async setMessages(data: any)     { return this.set(this.KEYS.MESSAGES,     data); },
+  async setCandidaturas(data: any) { return this.set(this.KEYS.CANDIDATURAS, data); },
+  async setSession(data: any)      { return this.set(this.KEYS.SESSION,      data); },
+
+  // Atualizar um único item dentro de um array por ID
+  async updateItem(key: string, id: string, changes: any) {
+    const items = await this.get(key, []);
+    const atualizados = items.map((item: any) =>
+      item.id === id ? { ...item, ...changes } : item
+    );
+    await this.set(key, atualizados);
+    return atualizados.find((item: any) => item.id === id);
+  },
+
+  // Adicionar item a um array
+  async addItem(key: string, item: any) {
+    const items = await this.get(key, []);
+    const atualizados = [...items, item];
+    await this.set(key, atualizados);
+    return item;
+  },
+
+  // Remover item de um array por ID
+  async removeItem(key: string, id: string) {
+    const items = await this.get(key, []);
+    const filtrados = items.filter((item: any) => item.id !== id);
+    await this.set(key, filtrados);
+    return filtrados;
+  },
+};
+
+const garantirDadosIniciais = async () => {
+  // Admin seed
+  const users = await DB.getUsers();
+  const adminExiste = users.some((u: any) => u.email === "admin@ministerio.com");
+  if (!adminExiste) {
+    await DB.addItem(DB.KEYS.USERS, {
+      id: "admin-seed-001",
+      nome: "Administrador",
+      email: "admin@ministerio.com",
+      senha: "admin123",
+      papel: "admin",
+      aprovado: true,
+      areas: [],
+      fotoPerfil: null,
+      dataEntrada: new Date().toISOString(),
+    });
+  }
+
+  // Garantir arrays vazios para todas as chaves (evita null no storage)
+  const schedules = await DB.getSchedules();
+  if (!Array.isArray(schedules)) await DB.setSchedules([]);
+
+  const notifs = await DB.getNotifs();
+  if (!Array.isArray(notifs)) await DB.setNotifs([]);
+
+  const posts = await DB.getPosts();
+  if (!Array.isArray(posts)) await DB.setPosts([]);
+
+  const messages = await DB.getMessages();
+  if (!Array.isArray(messages)) await DB.setMessages([]);
+
+  const cands = await DB.getCandidaturas();
+  if (!Array.isArray(cands)) await DB.setCandidaturas([]);
+};
+
+const useDBState = (getter: any, setter: any, chave: string) => {
+  const carregar = React.useCallback(async () => {
     try {
-      if (typeof window === 'undefined' || !window.storage || typeof window.storage.list !== 'function') return [];
-      return await window.storage.list();
-    } catch (e) {
-      console.error('Error listing storage:', e);
-      return [];
+      const dados = await getter();
+      setter(dados);
+    } catch (err) {
+      console.error(`[useDBState] Erro ao sincronizar "${chave}":`, err);
     }
+  }, [getter, setter, chave]);
+
+  return carregar;
+};
+
+// --- Image Helpers ---
+const converterParaBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+    reader.readAsDataURL(file);
+  });
+};
+
+const redimensionarImagem = (base64: string, maxWidth: number, maxHeight: number): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx?.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.src = base64;
+  });
+};
+
+const salvarFotoPerfil = async (base64: string, usuarioId: string, setUsuarioLogado: any) => {
+  try {
+    const users = await DB.getUsers();
+    const atualizados = users.map((u: any) =>
+      u.id === usuarioId ? { ...u, fotoPerfil: base64 } : u
+    );
+
+    await DB.setUsers(atualizados);
+
+    const usuarioAtualizado = atualizados.find((u: any) => u.id === usuarioId);
+    if (usuarioAtualizado) {
+      setUsuarioLogado(usuarioAtualizado);
+      await DB.setSession({
+        userId: usuarioAtualizado.id,
+        email: usuarioAtualizado.email,
+        papel: usuarioAtualizado.papel,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (err) {
+    console.error("Erro ao salvar foto:", err);
+    throw err;
   }
 };
 
+const ProfilePhotoUpload = ({ usuarioLogado, onFotoAtualizada }: any) => {
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const [carregando, setCarregando] = React.useState(false);
+  const [erro, setErro] = React.useState<string | null>(null);
+
+  const handleClick = () => {
+    setErro(null);
+    inputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const tiposPermitidos = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+    if (!tiposPermitidos.includes(file.type) && !file.type.startsWith("image/")) {
+      setErro("Formato não suportado. Use JPG, PNG ou WEBP.");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setErro("Imagem muito grande. Máximo 5MB.");
+      return;
+    }
+
+    setCarregando(true);
+    setErro(null);
+
+    try {
+      const base64 = await converterParaBase64(file);
+      const base64Reduzido = await redimensionarImagem(base64, 300, 300);
+      await onFotoAtualizada(base64Reduzido);
+    } catch (err) {
+      console.error("Erro ao processar imagem:", err);
+      setErro("Erro ao carregar imagem. Tente novamente.");
+    } finally {
+      setCarregando(false);
+      e.target.value = "";
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
+      <div
+        onClick={handleClick}
+        style={{
+          width: "90px",
+          height: "90px",
+          borderRadius: "50%",
+          background: usuarioLogado.fotoPerfil ? "transparent" : "#f0f0f0",
+          border: "2px solid #e5e5ea",
+          overflow: "hidden",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          position: "relative",
+        }}
+      >
+        {usuarioLogado.fotoPerfil ? (
+          <img
+            src={usuarioLogado.fotoPerfil}
+            alt="Foto de perfil"
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <span style={{ fontSize: "32px", color: "#6e6e73" }}>
+            {usuarioLogado.nome?.charAt(0).toUpperCase()}
+          </span>
+        )}
+
+        <div style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: "rgba(0,0,0,0.45)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "30px",
+        }}>
+          {carregando ? (
+            <div style={{
+              width: "14px", height: "14px",
+              border: "2px solid white",
+              borderTopColor: "transparent",
+              borderRadius: "50%",
+              animation: "spin 0.7s linear infinite",
+            }}/>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24"
+              fill="none" stroke="white" strokeWidth="2">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8
+                a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+          )}
+        </div>
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileChange}
+        style={{ display: "none" }}
+      />
+
+      <button
+        onClick={handleClick}
+        disabled={carregando}
+        style={{
+          background: "none",
+          border: "none",
+          color: "#1d1d1f",
+          fontSize: "14px",
+          fontWeight: "500",
+          cursor: carregando ? "not-allowed" : "pointer",
+          opacity: carregando ? 0.5 : 1,
+          padding: "4px 0",
+          fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+        }}
+      >
+        {carregando ? "Carregando..." : usuarioLogado.fotoPerfil ? "Trocar foto" : "Adicionar foto"}
+      </button>
+
+      {erro && (
+        <span style={{ fontSize: "12px", color: "#ff3b30", textAlign: "center" }}>
+          {erro}
+        </span>
+      )}
+    </div>
+  );
+};
+
 // --- Constants & Styles ---
+
+const EMAILS_AUTORIZADOS = [
+  "lucas.mansur@filmagem.com",
+  "felipe.augusto@filmagem.com",
+  "felipe.luiz@filmagem.com",
+  "gabriel@filmagem.com",
+  "gabriel.mares@filmagem.com",
+  "gibi@filmagem.com",
+  "helena.lomeu@filmagem.com",
+  "henrique.marcos@filmagem.com",
+  "joao.gabriel@filmagem.com",
+  "joao.pedro@filmagem.com",
+  "kaue@filmagem.com",
+  "laura@filmagem.com",
+  "matheus@filmagem.com",
+  "pedro@filmagem.com",
+  "pietro.gabriel@filmagem.com",
+  "arhur.miguel@filmagem.com",
+];
 
 const LogoFilmka = ({ size = "large" }) => {
   const isSmall = size === "small";
@@ -486,6 +804,8 @@ const StatusTag = ({ status }: { status: 'confirmado' | 'recusado' | 'pendente' 
 
 export default function App() {
   const [loading, setLoading] = useState(true);
+  const [loginCarregando, setLoginCarregando] = useState(false);
+  const [erroLogin, setErroLogin] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [screen, setScreen] = useState<'landing' | 'login' | 'register' | 'waiting' | 'dashboard'>('landing');
   const [users, setUsers] = useState<User[]>([]);
@@ -496,22 +816,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'calendar' | 'scales' | 'members' | 'notifs' | 'messages' | 'profile'>('scales');
 
   // --- Utility Functions for Notifications ---
-  const parseStorageData = (raw: any) => {
-    if (!raw) return [];
-    if (typeof raw === 'string') {
-      try { return JSON.parse(raw); } catch { return []; }
-    }
-    if (raw.value && typeof raw.value === 'string') {
-      try { return JSON.parse(raw.value); } catch { return []; }
-    }
-    if (Array.isArray(raw)) return raw;
-    return [];
-  };
-
   const buscarLideresEAdmins = async () => {
     try {
-      const raw: any = await AppStorage.get("church-users");
-      const users = parseStorageData(raw);
+      const users = await DB.getUsers();
       return users
         .filter((u: any) => u.papel === "leader" || u.papel === "admin")
         .map((u: any) => u.id);
@@ -524,8 +831,7 @@ export default function App() {
     try {
       if (!userIds || userIds.length === 0) return;
 
-      const raw: any = await AppStorage.get("church-notifs");
-      const existentes = parseStorageData(raw);
+      const existentes = await DB.getNotifs();
 
       const novas = userIds.map((uid, i) => ({
         id: `notif-${Date.now()}-${i}-${uid}`,
@@ -536,7 +842,7 @@ export default function App() {
       }));
 
       const atualizadas = [...existentes, ...novas];
-      await AppStorage.set("church-notifs", JSON.stringify(atualizadas));
+      await DB.setNotifs(atualizadas);
       
       // Update local state if the current user is among the recipients
       if (user && userIds.includes(user.id)) {
@@ -553,8 +859,7 @@ export default function App() {
   const carregarNotificacoes = async () => {
     if (!user) return;
     try {
-      const raw: any = await AppStorage.get("church-notifs");
-      const todas = parseStorageData(raw);
+      const todas = await DB.getNotifs();
       const minhas = todas.filter((n: any) => n.userId === user.id);
       setNotifications(minhas);
     } catch (err) {
@@ -563,30 +868,6 @@ export default function App() {
     }
   };
 
-  const garantirSeedAdmin = async () => {
-    try {
-      const raw: any = await AppStorage.get("church-users");
-      const users = parseStorageData(raw);
-      const adminExiste = users.some((u: any) => u.email === "admin@ministerio.com");
-      if (!adminExiste) {
-        const seed = {
-          id: "admin-seed-001",
-          nome: "Administrador",
-          email: "admin@ministerio.com",
-          senha: "admin123",
-          papel: "admin",
-          aprovado: true,
-          areas: [],
-          dataEntrada: new Date().toISOString(),
-          dataNascimento: '1990-01-01',
-        };
-        await AppStorage.set("church-users", JSON.stringify([...users, seed]));
-      }
-    } catch (err) {
-      console.error("Erro ao garantir seed admin:", err);
-    }
-  };
-  
   // Form States
   const [loginEmail, setLoginEmail] = useState('');
   const [loginSenha, setLoginSenha] = useState('');
@@ -595,11 +876,13 @@ export default function App() {
   const [regSenha, setRegSenha] = useState('');
   const [regNasc, setRegNasc] = useState('');
   const [regAreas, setRegAreas] = useState<string[]>([]);
+  const [erroCadastro, setErroCadastro] = useState<string | null>(null);
   
   // Candidacy Form States
   const [applyNome, setApplyNome] = useState('');
-  const [applyEmail, setApplyEmail] = useState('');
+  const [applyTelefone, setApplyTelefone] = useState('');
   const [applyMensagem, setApplyMensagem] = useState('');
+  const [mostrarPopupCandidatura, setMostrarPopupCandidatura] = useState(false);
   const [candidaturas, setCandidaturas] = useState<any[]>([]);
   const [selectedCandidacy, setSelectedCandidacy] = useState<any>(null);
   const [isCandidacyModalOpen, setIsCandidacyModalOpen] = useState(false);
@@ -614,93 +897,156 @@ export default function App() {
 
   const AREAS = ["Filmagem — Ministério Geral", "Equipe Íris", "Corte", "Novos Membros"];
 
+  const carregarUsuarios   = useDBState(DB.getUsers.bind(DB),   setUsers,   "users");
+  const carregarEscalas    = useDBState(DB.getSchedules.bind(DB), setScales, "schedules");
+  const carregarNotifs     = useDBState(DB.getNotifs.bind(DB),  setNotifications,    "notifs");
+  const carregarPosts      = useDBState(DB.getPosts.bind(DB),   setPosts,     "posts");
+  const carregarMensagens  = useDBState(DB.getMessages.bind(DB), setMessages, "messages");
+  const carregarCandidaturas = useDBState(DB.getCandidaturas.bind(DB), setCandidaturas, "candidaturas");
+
   useEffect(() => {
-    garantirSeedAdmin().then(() => {
-      init();
-    });
+    const inicializar = async () => {
+      setLoading(true);
+      try {
+        // 1. Garantir estrutura do banco
+        await garantirDadosIniciais();
+
+        // 2. Carregar todos os dados no estado React
+        await Promise.all([
+          carregarUsuarios(),
+          carregarEscalas(),
+          carregarNotifs(),
+          carregarPosts(),
+          carregarMensagens(),
+          carregarCandidaturas(),
+        ]);
+
+        // 3. Restaurar sessão
+        const sessao = await DB.getSession();
+        if (sessao?.userId) {
+          const users = await DB.getUsers();
+          const usuario = users.find((u: any) => u.id === sessao.userId);
+
+          if (usuario) {
+            const agora = new Date();
+            const criacao = new Date(sessao.timestamp);
+            const diasPassados = (agora.getTime() - criacao.getTime()) / (1000 * 60 * 60 * 24);
+
+            if (diasPassados <= 30) {
+              setUser(usuario);
+              if (usuario.papel === "pending" || !usuario.aprovado) {
+                setScreen("waiting");
+              } else {
+                setScreen("dashboard");
+              }
+              setLoading(false);
+              return;
+            }
+          }
+          // Sessão inválida — limpar
+          await DB.delete(DB.KEYS.SESSION);
+        }
+
+        setScreen("landing");
+      } catch (err) {
+        console.error("Erro crítico na inicialização:", err);
+        setScreen("landing");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    inicializar();
+
+    // Adicionar animação do spinner
+    const style = document.createElement("style");
+    style.innerHTML = `
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
   }, []);
 
   useEffect(() => {
     if (activeTab === "notifs") carregarNotificacoes();
   }, [activeTab]);
 
-  const init = async (retryCount = 0) => {
+  const handleLogin = async () => {
     try {
-      // Wait for window.storage if it's not ready yet (max 5 retries)
-      if ((typeof window === 'undefined' || !window.storage) && retryCount < 5) {
-        setTimeout(() => init(retryCount + 1), 500);
+      setLoginCarregando(true);
+      setErroLogin(null);
+      
+      const users = await DB.getUsers();
+
+      const emailNormalizado = loginEmail.trim().toLowerCase();
+      const senhaNormalizada = loginSenha.trim();
+
+      const usuario = users.find(
+        (u: any) =>
+          u.email.trim().toLowerCase() === emailNormalizado &&
+          u.senha.trim() === senhaNormalizada
+      );
+
+      if (!usuario) {
+        setErroLogin("E-mail ou senha inválidos.");
         return;
       }
 
-      const rawUsers: any = await AppStorage.get('church-users');
-      const storedUsers = parseStorageData(rawUsers);
+      setUser(usuario);
+      await DB.setSession({
+        userId: usuario.id,
+        email: usuario.email,
+        papel: usuario.papel,
+        timestamp: new Date().toISOString(),
+      });
 
-      const rawScales: any = await AppStorage.get('church-schedules');
-      const storedScales = parseStorageData(rawScales);
-
-      const rawNotifs: any = await AppStorage.get('church-notifs');
-      const storedNotifs = parseStorageData(rawNotifs);
-
-      const rawPosts: any = await AppStorage.get('church-posts');
-      const storedPosts = parseStorageData(rawPosts);
-
-      const rawMessages: any = await AppStorage.get('church-messages');
-      const storedMessages = parseStorageData(rawMessages);
-
-      const rawCandidaturas: any = await AppStorage.get('church-candidaturas');
-      const storedCandidaturas = parseStorageData(rawCandidaturas);
-      
-      setUsers(storedUsers);
-      setScales(storedScales);
-      setPosts(storedPosts);
-      setMessages(storedMessages);
-      setCandidaturas(storedCandidaturas);
-      
-      // Check if user is already logged in (simulated session)
-      const session = sessionStorage.getItem('church-session');
-      if (session) {
-        const u = storedUsers.find((u: any) => u.id === session);
-        if (u) {
-          setUser(u);
-          const minhasNotifs = storedNotifs.filter((n: any) => n.userId === u.id);
-          setNotifications(minhasNotifs);
-          if (!u.aprovado) setScreen('waiting');
-          else setScreen('dashboard');
-        }
+      if (usuario.papel === "admin" || usuario.papel === "leader") {
+        setScreen("dashboard");
+      } else if (usuario.papel === "pending" || !usuario.aprovado) {
+        setScreen("waiting");
+      } else {
+        setScreen("dashboard");
       }
-    } catch (e) {
-      console.error(e);
+    } catch (err) {
+      console.error("Erro no login:", err);
+      setErroLogin("Erro ao tentar entrar. Tente novamente.");
     } finally {
-      setTimeout(() => setLoading(false), 1000);
-    }
-  };
-
-  const handleLogin = () => {
-    const u = users.find(u => u.email === loginEmail && u.senha === loginSenha);
-    if (u) {
-      setUser(u);
-      sessionStorage.setItem('church-session', u.id);
-      if (!u.aprovado) setScreen('waiting');
-      else setScreen('dashboard');
-    } else {
-      alert('Email ou senha incorretos.');
+      setLoginCarregando(false);
     }
   };
 
   const handleRegister = async () => {
+    setErroCadastro(null);
     if (!regNome || !regEmail || !regSenha || regAreas.length === 0) {
       alert('Preencha todos os campos e selecione ao menos uma área.');
       return;
     }
-    if (users.find(u => u.email === regEmail)) {
-      alert('Email já cadastrado.');
+
+    const emailDigitado = regEmail.trim().toLowerCase();
+
+    if (!EMAILS_AUTORIZADOS.includes(emailDigitado)) {
+      setErroCadastro(
+        "Este e-mail não está autorizado a criar uma conta. Entre em contato com a liderança."
+      );
+      return;
+    }
+
+    if (users.find(u => u.email.trim().toLowerCase() === emailDigitado)) {
+      setErroCadastro("Este e-mail já possui uma conta cadastrada.");
+      return;
+    }
+
+    if (regSenha.length < 6) {
+      alert('A senha deve ter no mínimo 6 caracteres.');
       return;
     }
 
     const newUser: User = {
       id: Math.random().toString(36).substr(2, 9),
       nome: regNome,
-      email: regEmail,
+      email: emailDigitado,
       senha: regSenha,
       dataNascimento: regNasc,
       areas: regAreas,
@@ -709,9 +1055,8 @@ export default function App() {
       dataEntrada: new Date().toISOString(),
     };
 
-    const updatedUsers = [...users, newUser];
-    setUsers(updatedUsers);
-    await AppStorage.set('church-users', JSON.stringify(updatedUsers));
+    await DB.addItem(DB.KEYS.USERS, newUser);
+    setUsers(prev => [...prev, newUser]);
     
     const ids = await buscarLideresEAdmins();
     await criarNotificacoes(ids, `Novo membro aguardando aprovação: ${newUser.nome}`);
@@ -721,80 +1066,99 @@ export default function App() {
   };
 
   const handleApply = async () => {
-    if (!applyNome || !applyEmail || !applyMensagem) {
-      alert('Preencha todos os campos da candidatura.');
-      return;
+    try {
+      if (!applyNome || !applyTelefone || !applyMensagem) {
+        alert('Preencha todos os campos da candidatura.');
+        return;
+      }
+
+      const novaCandidatura = {
+        id: `cand-${Date.now()}`,
+        nome: applyNome.trim(),
+        telefone: applyTelefone.trim(),
+        mensagem: applyMensagem.trim(),
+        data: new Date().toISOString(),
+      };
+
+      await DB.addItem(DB.KEYS.CANDIDATURAS, novaCandidatura);
+      setCandidaturas(prev => [...prev, novaCandidatura]);
+
+      // Notificar todos os líderes e admins
+      const ids = await buscarLideresEAdmins();
+      await criarNotificacoes(
+        ids,
+        `Nova candidatura recebida de: ${novaCandidatura.nome} — Tel: ${novaCandidatura.telefone}`
+      );
+
+      // Exibir pop-up de sucesso
+      setMostrarPopupCandidatura(true);
+      setIsApplyModalOpen(false);
+      setApplyNome('');
+      setApplyTelefone('');
+      setApplyMensagem('');
+      setTimeout(() => setMostrarPopupCandidatura(false), 4000);
+
+    } catch (err) {
+      console.error("Erro ao enviar candidatura:", err);
     }
-
-    const candidatura = {
-      id: Math.random().toString(36).substr(2, 9),
-      nome: applyNome,
-      email: applyEmail,
-      mensagem: applyMensagem,
-      data: new Date().toISOString()
-    };
-
-    const updatedCandidaturas = [...candidaturas, candidatura];
-    setCandidaturas(updatedCandidaturas);
-    await AppStorage.set('church-candidaturas', JSON.stringify(updatedCandidaturas));
-
-    const ids = await buscarLideresEAdmins();
-    await criarNotificacoes(ids, `Nova candidatura recebida de: ${candidatura.nome} — ${candidatura.email}`);
-
-    setIsApplyModalOpen(false);
-    setIsCandidacySuccessOpen(true);
-    setApplyNome('');
-    setApplyEmail('');
-    setApplyMensagem('');
-    setTimeout(() => setIsCandidacySuccessOpen(false), 4000);
   };
 
-  const handleLogout = () => {
-    setUser(null);
-    sessionStorage.removeItem('church-session');
-    setScreen('landing');
-    setActiveTab('scales');
+  const handleLogout = async () => {
+    try {
+      await DB.delete(DB.KEYS.SESSION);
+    } catch (err) {
+      console.error("Erro ao limpar sessão:", err);
+    } finally {
+      setUser(null);
+      setScreen('landing');
+      setActiveTab('scales');
+    }
   };
 
   const handleApproveUser = async (userId: string, approve: boolean) => {
-    const updatedUsers = users.map(u => {
-      if (u.id === userId) {
-        return { ...u, aprovado: approve, papel: approve ? 'volunteer' : 'pending' as Role };
-      }
-      return u;
-    });
-    
     if (!approve) {
-      const filtered = updatedUsers.filter(u => u.id !== userId);
-      setUsers(filtered);
-      await AppStorage.set('church-users', JSON.stringify(filtered));
+      await DB.removeItem(DB.KEYS.USERS, userId);
+      setUsers(prev => prev.filter(u => u.id !== userId));
     } else {
-      setUsers(updatedUsers);
-      await AppStorage.set('church-users', JSON.stringify(updatedUsers));
+      const changes = { aprovado: true, papel: 'volunteer' as Role };
+      await DB.updateItem(DB.KEYS.USERS, userId, changes);
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, ...changes } : u));
+      
       await criarNotificacoes([userId], "Seu cadastro foi aprovado! Bem-vindo ao ministério.");
+      
+      if (user?.id === userId) {
+        await DB.setSession({
+          userId: user.id,
+          email: user.email,
+          papel: 'volunteer',
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
   };
 
   const handlePromoteUser = async (userId: string) => {
-    const updatedUsers = users.map(u => {
-      if (u.id === userId) {
-        const newPapel: Role = u.papel === 'volunteer' ? 'leader' : 'volunteer';
-        return { ...u, papel: newPapel };
-      }
-      return u;
-    });
-    setUsers(updatedUsers);
-    await AppStorage.set('church-users', JSON.stringify(updatedUsers));
+    const u = users.find(u => u.id === userId);
+    if (!u) return;
+
+    const newPapel: Role = u.papel === 'volunteer' ? 'leader' : 'volunteer';
+    await DB.updateItem(DB.KEYS.USERS, userId, { papel: newPapel });
+    
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, papel: newPapel } : u));
+    
+    if (user?.id === userId) {
+      await DB.setSession({
+        userId: user.id,
+        email: user.email,
+        papel: newPapel,
+        timestamp: new Date().toISOString(),
+      });
+    }
   };
 
   const handleMarkNotifRead = async (notifId: string) => {
     try {
-      const raw: any = await AppStorage.get("church-notifs");
-      const todas = parseStorageData(raw);
-      const atualizadas = todas.map((n: any) =>
-        n.id === notifId ? { ...n, lida: true } : n
-      );
-      await AppStorage.set("church-notifs", JSON.stringify(atualizadas));
+      await DB.updateItem(DB.KEYS.NOTIFS, notifId, { lida: true });
       setNotifications(prev => prev.map(n =>
         n.id === notifId ? { ...n, lida: true } : n
       ));
@@ -808,11 +1172,11 @@ export default function App() {
   };
 
   const handleViewCandidacy = (mensagem: string) => {
-    // Extract email from message: "Nova candidatura recebida de: [nome] — [email]"
-    const parts = mensagem.split(' — ');
+    // Extract telephone from message: "Nova candidatura recebida de: [nome] — Tel: [telefone]"
+    const parts = mensagem.split(' — Tel: ');
     if (parts.length < 2) return;
-    const email = parts[1].trim();
-    const cand = candidaturas.find(c => c.email === email);
+    const tel = parts[1].trim();
+    const cand = candidaturas.find(c => c.telefone === tel);
     if (cand) {
       setSelectedCandidacy(cand);
       setIsCandidacyModalOpen(true);
@@ -820,9 +1184,12 @@ export default function App() {
   };
 
   const handleSaveScale = async (scaleData: any) => {
-    let updatedScales;
+    const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
+    if (!isAdminOrLeader) return;
+    
     if (editingScale) {
-      updatedScales = scales.map(s => s.id === editingScale.id ? { ...s, ...scaleData } : s);
+      await DB.updateItem(DB.KEYS.SCHEDULES, editingScale.id, scaleData);
+      setScales(prev => prev.map(s => s.id === editingScale.id ? { ...s, ...scaleData } : s));
     } else {
       const newScale: Scale = {
         id: Math.random().toString(36).substr(2, 9),
@@ -830,7 +1197,9 @@ export default function App() {
         confirmacoes: {},
         criadoPor: user?.id || ''
       };
-      updatedScales = [newScale, ...scales];
+      
+      await DB.addItem(DB.KEYS.SCHEDULES, newScale);
+      setScales(prev => [newScale, ...prev]);
       
       // Notify designated volunteers
       const pos = scaleData.posicoes;
@@ -841,29 +1210,24 @@ export default function App() {
         await criarNotificacoes([vid], `Você foi escalado: ${scaleData.titulo} — ${scaleData.data} às ${scaleData.horario} | Posição: ${formattedPos}`);
       }
     }
-    setScales(updatedScales);
-    await AppStorage.set('church-schedules', JSON.stringify(updatedScales));
     setIsScaleModalOpen(false);
     setEditingScale(null);
   };
 
   const handleDeleteScale = async (id: string) => {
+    const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
+    if (!isAdminOrLeader) return;
+    
     if (confirm('Deseja excluir esta escala?')) {
-      const updated = scales.filter(s => s.id !== id);
-      setScales(updated);
-      await AppStorage.set('church-schedules', JSON.stringify(updated));
+      await DB.removeItem(DB.KEYS.SCHEDULES, id);
+      setScales(prev => prev.filter(s => s.id !== id));
     }
   };
 
   const handleConfirmPresence = async (scaleId: string, status: 'confirmado' | 'recusado') => {
-    const updated = scales.map(s => {
-      if (s.id === scaleId) {
-        return { ...s, confirmacoes: { ...s.confirmacoes, [user!.id]: status } };
-      }
-      return s;
-    });
-    setScales(updated);
-    await AppStorage.set('church-schedules', JSON.stringify(updated));
+    const changes = { confirmacoes: { ...scales.find(s => s.id === scaleId)?.confirmacoes, [user!.id]: status } };
+    await DB.updateItem(DB.KEYS.SCHEDULES, scaleId, changes);
+    setScales(prev => prev.map(s => s.id === scaleId ? { ...s, ...changes } : s));
   };
 
   const handlePost = async (conteudo: string) => {
@@ -877,9 +1241,9 @@ export default function App() {
       lida: [user!.id],
       likes: []
     };
-    const updatedPosts = [newPost, ...posts];
-    setPosts(updatedPosts);
-    await AppStorage.set('church-posts', JSON.stringify(updatedPosts));
+    
+    await DB.addItem(DB.KEYS.POSTS, newPost);
+    setPosts(prev => [newPost, ...prev]);
     
     // Notify all approved members
     const approvedUsers = users.filter(u => u.aprovado);
@@ -891,37 +1255,32 @@ export default function App() {
 
   const handleToggleLike = async (postId: string) => {
     if (!user) return;
-    const updated = posts.map(p => {
-      if (p.id === postId) {
-        const likes = p.likes || [];
-        const newLikes = likes.includes(user.id) 
-          ? likes.filter(id => id !== user.id) 
-          : [...likes, user.id];
-        return { ...p, likes: newLikes };
-      }
-      return p;
-    });
-    setPosts(updated);
-    await AppStorage.set('church-posts', JSON.stringify(updated));
+    const post = posts.find(p => p.id === postId);
+    if (!post) return;
+
+    const likes = post.likes || [];
+    const newLikes = likes.includes(user.id) 
+      ? likes.filter(id => id !== user.id) 
+      : [...likes, user.id];
+    
+    await DB.updateItem(DB.KEYS.POSTS, postId, { likes: newLikes });
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, likes: newLikes } : p));
   };
 
   const handleDeletePost = async (id: string) => {
     if (confirm('Deseja excluir este post?')) {
-      const updated = posts.filter(p => p.id !== id);
-      setPosts(updated);
-      await AppStorage.set('church-posts', JSON.stringify(updated));
+      await DB.removeItem(DB.KEYS.POSTS, id);
+      setPosts(prev => prev.filter(p => p.id !== id));
     }
   };
 
   const markPostAsRead = async (id: string) => {
-    const updated = posts.map(p => {
-      if (p.id === id && !p.lida.includes(user!.id)) {
-        return { ...p, lida: [...p.lida, user!.id] };
-      }
-      return p;
-    });
-    setPosts(updated);
-    await AppStorage.set('church-posts', JSON.stringify(updated));
+    const post = posts.find(p => p.id === id);
+    if (post && !post.lida.includes(user!.id)) {
+      const newLida = [...post.lida, user!.id];
+      await DB.updateItem(DB.KEYS.POSTS, id, { lida: newLida });
+      setPosts(prev => prev.map(p => p.id === id ? { ...p, lida: newLida } : p));
+    }
   };
 
   const handleSendMessage = async (destinatarioId: string, conteudo: string, isSystem = false, senderIdOverride?: string) => {
@@ -934,31 +1293,34 @@ export default function App() {
       lida: false,
       isSystem
     };
-    const updatedMessages = [...messages, newMessage];
-    setMessages(updatedMessages);
-    await AppStorage.set('church-messages', JSON.stringify(updatedMessages));
+    
+    await DB.addItem(DB.KEYS.MESSAGES, newMessage);
+    setMessages(prev => [...prev, newMessage]);
   };
 
   const handleReactToMessage = async (messageId: string, emoji: string) => {
-    const updatedMessages = messages.map(m => {
-      if (m.id === messageId) {
-        return { ...m, reacoes: { ...(m.reacoes || {}), [user!.id]: emoji } };
-      }
-      return m;
-    });
-    setMessages(updatedMessages);
-    await AppStorage.set('church-messages', JSON.stringify(updatedMessages));
+    const msg = messages.find(m => m.id === messageId);
+    if (!msg) return;
+
+    const reacoes = { ...(msg.reacoes || {}), [user!.id]: emoji };
+    await DB.updateItem(DB.KEYS.MESSAGES, messageId, { reacoes });
+    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reacoes } : m));
   };
 
   const markMessagesAsRead = async (otherUserId: string) => {
-    const updated = messages.map(m => {
-      if (m.remetenteId === otherUserId && m.destinatarioId === user!.id && !m.lida) {
-        return { ...m, lida: true };
-      }
-      return m;
-    });
-    setMessages(updated);
-    await AppStorage.set('church-messages', JSON.stringify(updated));
+    const unreadIds = messages
+      .filter(m => m.remetenteId === otherUserId && m.destinatarioId === user!.id && !m.lida)
+      .map(m => m.id);
+    
+    if (unreadIds.length === 0) return;
+
+    const allMessages = await DB.getMessages();
+    const updated = allMessages.map((m: any) => 
+      unreadIds.includes(m.id) ? { ...m, lida: true } : m
+    );
+    await DB.setMessages(updated);
+    
+    setMessages(prev => prev.map(m => unreadIds.includes(m.id) ? { ...m, lida: true } : m));
   };
 
   const checkAutoFails = async (currentScales: Scale[]) => {
@@ -1002,8 +1364,8 @@ export default function App() {
     }
 
     if (changed) {
+      await DB.setSchedules(updatedScales);
       setScales(updatedScales);
-      await AppStorage.set('church-schedules', JSON.stringify(updatedScales));
     }
   };
 
@@ -1056,7 +1418,26 @@ export default function App() {
       <Modal isOpen={isApplyModalOpen} onClose={() => setIsApplyModalOpen(false)} title="Candidatura">
         <p style={{ color: COLORS.gray, fontSize: '14px', marginBottom: '20px' }}>Deixe seu interesse em participar do nosso ministério.</p>
         <Input label="Nome completo" placeholder="Seu nome" value={applyNome} onChange={setApplyNome} />
-        <Input label="Email" placeholder="seu@email.com" value={applyEmail} onChange={setApplyEmail} />
+        <div style={{ marginBottom: '20px' }}>
+          <label style={styles.label}>Número de telefone</label>
+          <input
+            type="tel"
+            placeholder="Número de telefone (ex: 11 99999-9999)"
+            value={applyTelefone}
+            onChange={e => setApplyTelefone(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: "10px",
+              border: "1px solid #e5e5ea",
+              fontSize: "15px",
+              fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+              outline: "none",
+              boxSizing: "border-box",
+              backgroundColor: COLORS.lightGray,
+            }}
+          />
+        </div>
         <div style={{ marginBottom: '20px' }}>
           <label style={styles.label}>Mensagem</label>
           <textarea 
@@ -1069,7 +1450,7 @@ export default function App() {
         <Button onClick={handleApply} style={{ width: '100%' }}>Enviar Interesse</Button>
       </Modal>
 
-      <CandidacySuccessModal isOpen={isCandidacySuccessOpen} onClose={() => setIsCandidacySuccessOpen(false)} />
+      <CandidacySuccessModal isOpen={mostrarPopupCandidatura} onClose={() => setMostrarPopupCandidatura(false)} />
     </div>
   );
 
@@ -1084,7 +1465,20 @@ export default function App() {
       <h2 style={{ fontSize: '28px', fontWeight: 700, marginBottom: '30px' }}>Entrar</h2>
       <Input label="Email" value={loginEmail} onChange={setLoginEmail} placeholder="seu@email.com" />
       <Input label="Senha" type="password" value={loginSenha} onChange={setLoginSenha} placeholder="Sua senha" />
-      <Button onClick={handleLogin} style={{ width: '100%', marginTop: '20px' }}>Entrar</Button>
+      {erroLogin && <p style={{ color: COLORS.red, fontSize: '14px', marginTop: '10px' }}>{erroLogin}</p>}
+      <button 
+        onClick={handleLogin} 
+        disabled={loginCarregando}
+        style={{ 
+          ...styles.button,
+          width: '100%', 
+          marginTop: '20px',
+          opacity: loginCarregando ? 0.6 : 1,
+          cursor: loginCarregando ? "not-allowed" : "pointer",
+        }}
+      >
+        {loginCarregando ? "Entrando..." : "Entrar"}
+      </button>
     </div>
   );
 
@@ -1101,6 +1495,7 @@ export default function App() {
       <Input label="Data de nascimento" type="date" value={regNasc} onChange={setRegNasc} />
       <Input label="Email" value={regEmail} onChange={setRegEmail} placeholder="seu@email.com" />
       <Input label="Senha" type="password" value={regSenha} onChange={setRegSenha} placeholder="Mínimo 6 caracteres" />
+      {erroCadastro && <p style={{ color: COLORS.red, fontSize: '14px', marginTop: '10px', marginBottom: '10px' }}>{erroCadastro}</p>}
       
       <div style={{ marginBottom: '20px' }}>
         <label style={styles.label}>Áreas de atuação (Selecione uma ou mais)</label>
@@ -1318,9 +1713,50 @@ export default function App() {
             })
           }
         />
+
+        <Modal isOpen={isCandidacyModalOpen} onClose={() => setIsCandidacyModalOpen(false)} title="Detalhes da Candidatura">
+          {selectedCandidacy && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={styles.label}>Nome</label>
+                <p style={{ fontSize: '16px', fontWeight: 600 }}>{selectedCandidacy.nome}</p>
+              </div>
+              <div>
+                <label style={styles.label}>Telefone</label>
+                <p style={{ fontSize: '16px', fontWeight: 600 }}>{selectedCandidacy.telefone}</p>
+              </div>
+              <div>
+                <label style={styles.label}>Mensagem</label>
+                <p style={{ fontSize: '15px', lineHeight: '1.5', backgroundColor: COLORS.lightGray, padding: '12px', borderRadius: '10px' }}>{selectedCandidacy.mensagem}</p>
+              </div>
+              <Button onClick={() => setIsCandidacyModalOpen(false)} style={{ marginTop: '10px' }}>Fechar</Button>
+            </div>
+          )}
+        </Modal>
       </div>
     );
   };
+
+  if (loading) {
+    return (
+      <div style={{ ...styles.container, justifyContent: 'center', alignItems: 'center' }}>
+        <div style={{ 
+          width: '40px', 
+          height: '40px', 
+          border: `4px solid ${COLORS.lightGray}`, 
+          borderTop: `4px solid ${COLORS.black}`, 
+          borderRadius: '50%', 
+          animation: 'spin 1s linear infinite' 
+        }} />
+        <style>{`
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
@@ -2132,28 +2568,19 @@ const NotifsTab = ({ notifications, user, onMarkAsRead, onNavigateToMembers, onV
 };
 
 const ProfileTab = ({ user, users, setUsers, setUser, onLogout }: { user: User, users: User[], setUsers: any, setUser: any, onLogout: any }) => {
-  const handlePhotoChange = async () => {
-    const url = prompt('Insira a URL da nova foto de perfil:');
-    if (url) {
-      const updatedUsers = users.map(u => u.id === user?.id ? { ...u, fotoPerfil: url } : u);
-      setUsers(updatedUsers);
-      setUser({ ...user!, fotoPerfil: url });
-      await AppStorage.set('church-users', JSON.stringify(updatedUsers));
-    }
-  };
-
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       <div style={{ ...styles.card, backgroundColor: COLORS.black, color: 'white', textAlign: 'center', padding: '30px 20px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: 'none' }}>
-        <div style={{ position: 'relative', width: '100px', height: '100px', margin: '0 auto 16px' }}>
-          <div style={{ width: '100%', height: '100%', borderRadius: '50%', backgroundColor: COLORS.gray, overflow: 'hidden', border: '3px solid rgba(255,255,255,0.2)' }}>
-            {user?.fotoPerfil ? <img src={user.fotoPerfil} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" /> : <UserIcon size={50} style={{ margin: '22px' }} />}
-          </div>
-          <button onClick={handlePhotoChange} style={{ position: 'absolute', bottom: 0, right: 0, backgroundColor: COLORS.white, color: COLORS.black, border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>
-            <Camera size={16} />
-          </button>
-        </div>
-        <h2 style={{ fontSize: '22px', fontWeight: 700 }}>{user?.nome}</h2>
+        <ProfilePhotoUpload
+          usuarioLogado={user}
+          onFotoAtualizada={async (base64: string) => {
+            await salvarFotoPerfil(base64, user.id, setUser);
+            // Sincronizar lista de usuários também
+            const updated = await DB.getUsers();
+            setUsers(updated);
+          }}
+        />
+        <h2 style={{ fontSize: '22px', fontWeight: 700, marginTop: '12px' }}>{user?.nome}</h2>
         <p style={{ opacity: 0.7, fontSize: '14px', marginTop: '4px' }}>{user?.areas.join(' • ')}</p>
       </div>
 
