@@ -63,7 +63,7 @@ interface Scale {
     camera3: string | null;
   };
   notas: string;
-  confirmacoes: Record<string, 'confirmado' | 'recusado' | 'furou'>;
+  confirmacoes: Record<string, 'confirmado' | 'recusado' | 'furou' | 'pendente' | 'indisponivel' | 'aguardando_validacao' | 'serviu'>;
   criadoPor: string;
 }
 
@@ -99,7 +99,6 @@ interface Notification {
 
 // --- Database Layer ---
 const DB = {
-  // Chaves do banco
   KEYS: {
     USERS:        "church-users",
     SCHEDULES:    "church-schedules",
@@ -110,42 +109,41 @@ const DB = {
     SESSION:      "church-session",
   },
 
-  // Leitura segura — sempre retorna array ou objeto conforme esperado
   async get(key: string, fallback = []) {
-    try {
-      const raw = await window.storage.get(key);
-      if (!raw?.value) return fallback;
-      const parsed = JSON.parse(raw.value);
-      return parsed ?? fallback;
-    } catch (err) {
-      console.error(`[DB] Erro ao ler "${key}":`, err);
-      return fallback;
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      try {
+        const raw = await window.storage.get(key);
+        if (!raw?.value) return fallback;
+        const parsed = JSON.parse(raw.value);
+        return parsed ?? fallback;
+      } catch (err) {
+        console.warn(`[DB] Tentativa ${tentativa} falhou para "${key}":`, err);
+        if (tentativa === 3) return fallback;
+        await new Promise(r => setTimeout(r, 300 * tentativa));
+      }
     }
+    return fallback;
   },
 
-  // Escrita segura — serializa e salva
   async set(key: string, value: any) {
-    try {
-      await window.storage.set(key, JSON.stringify(value));
-      return true;
-    } catch (err) {
-      console.error(`[DB] Erro ao salvar "${key}":`, err);
-      return false;
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      try {
+        await window.storage.set(key, JSON.stringify(value));
+        return true;
+      } catch (err) {
+        console.warn(`[DB] Tentativa ${tentativa} de escrita falhou para "${key}":`, err);
+        if (tentativa === 3) return false;
+        await new Promise(r => setTimeout(r, 300 * tentativa));
+      }
     }
+    return false;
   },
 
-  // Deleção segura
   async delete(key: string) {
-    try {
-      await window.storage.delete(key);
-      return true;
-    } catch (err) {
-      console.error(`[DB] Erro ao deletar "${key}":`, err);
-      return false;
-    }
+    try { await window.storage.delete(key); return true; }
+    catch (err) { console.error(`[DB] Erro ao deletar "${key}":`, err); return false; }
   },
 
-  // Helpers específicos por entidade
   async getUsers()        { return this.get(this.KEYS.USERS,        []); },
   async getSchedules()    { return this.get(this.KEYS.SCHEDULES,    []); },
   async getNotifs()       { return this.get(this.KEYS.NOTIFS,       []); },
@@ -154,25 +152,21 @@ const DB = {
   async getCandidaturas() { return this.get(this.KEYS.CANDIDATURAS, []); },
   async getSession()      { return this.get(this.KEYS.SESSION,      null); },
 
-  async setUsers(data: any)        { return this.set(this.KEYS.USERS,        data); },
-  async setSchedules(data: any)    { return this.set(this.KEYS.SCHEDULES,    data); },
-  async setNotifs(data: any)       { return this.set(this.KEYS.NOTIFS,       data); },
-  async setPosts(data: any)        { return this.set(this.KEYS.POSTS,        data); },
-  async setMessages(data: any)     { return this.set(this.KEYS.MESSAGES,     data); },
-  async setCandidaturas(data: any) { return this.set(this.KEYS.CANDIDATURAS, data); },
-  async setSession(data: any)      { return this.set(this.KEYS.SESSION,      data); },
+  async setUsers(d: any)        { return this.set(this.KEYS.USERS,        d); },
+  async setSchedules(d: any)    { return this.set(this.KEYS.SCHEDULES,    d); },
+  async setNotifs(d: any)       { return this.set(this.KEYS.NOTIFS,       d); },
+  async setPosts(d: any)        { return this.set(this.KEYS.POSTS,        d); },
+  async setMessages(d: any)     { return this.set(this.KEYS.MESSAGES,     d); },
+  async setCandidaturas(d: any) { return this.set(this.KEYS.CANDIDATURAS, d); },
+  async setSession(d: any)      { return this.set(this.KEYS.SESSION,      d); },
 
-  // Atualizar um único item dentro de um array por ID
   async updateItem(key: string, id: string, changes: any) {
     const items = await this.get(key, []);
-    const atualizados = items.map((item: any) =>
-      item.id === id ? { ...item, ...changes } : item
-    );
+    const atualizados = items.map((i: any) => i.id === id ? { ...i, ...changes } : i);
     await this.set(key, atualizados);
-    return atualizados.find((item: any) => item.id === id);
+    return atualizados.find((i: any) => i.id === id);
   },
 
-  // Adicionar item a um array
   async addItem(key: string, item: any) {
     const items = await this.get(key, []);
     const atualizados = [...items, item];
@@ -180,21 +174,17 @@ const DB = {
     return item;
   },
 
-  // Remover item de um array por ID
   async removeItem(key: string, id: string) {
     const items = await this.get(key, []);
-    const filtrados = items.filter((item: any) => item.id !== id);
+    const filtrados = items.filter((i: any) => i.id !== id);
     await this.set(key, filtrados);
     return filtrados;
   },
 };
 
-const garantirDadosIniciais = async () => {
-  // Admin seed
-  const users = await DB.getUsers();
-  const adminExiste = users.some((u: any) => u.email === "admin@ministerio.com");
-  if (!adminExiste) {
-    await DB.addItem(DB.KEYS.USERS, {
+const garantirSeedAdmin = async () => {
+  try {
+    const SEED_ADMIN = {
       id: "admin-seed-001",
       nome: "Administrador",
       email: "admin@ministerio.com",
@@ -204,24 +194,37 @@ const garantirDadosIniciais = async () => {
       areas: [],
       fotoPerfil: null,
       dataEntrada: new Date().toISOString(),
-    });
+    };
+
+    let users = await DB.get(DB.KEYS.USERS, []);
+
+    // Remover qualquer versão corrompida do admin e reinserir limpo
+    users = users.filter((u: any) => u.id !== "admin-seed-001" && u.email !== "admin@ministerio.com");
+    users.unshift(SEED_ADMIN); // Inserir sempre na primeira posição
+
+    await DB.set(DB.KEYS.USERS, users);
+
+    console.log("✅ Seed admin garantido:", SEED_ADMIN);
+    console.log("✅ Todos os usuários:", users);
+
+    return users;
+  } catch (err) {
+    console.error("❌ Erro crítico no seed admin:", err);
+    // Último recurso — salvar apenas o admin
+    const fallback = [{
+      id: "admin-seed-001",
+      nome: "Administrador",
+      email: "admin@ministerio.com",
+      senha: "admin123",
+      papel: "admin",
+      aprovado: true,
+      areas: [],
+      fotoPerfil: null,
+      dataEntrada: new Date().toISOString(),
+    }];
+    await DB.set(DB.KEYS.USERS, fallback);
+    return fallback;
   }
-
-  // Garantir arrays vazios para todas as chaves (evita null no storage)
-  const schedules = await DB.getSchedules();
-  if (!Array.isArray(schedules)) await DB.setSchedules([]);
-
-  const notifs = await DB.getNotifs();
-  if (!Array.isArray(notifs)) await DB.setNotifs([]);
-
-  const posts = await DB.getPosts();
-  if (!Array.isArray(posts)) await DB.setPosts([]);
-
-  const messages = await DB.getMessages();
-  if (!Array.isArray(messages)) await DB.setMessages([]);
-
-  const cands = await DB.getCandidaturas();
-  if (!Array.isArray(cands)) await DB.setCandidaturas([]);
 };
 
 const useDBState = (getter: any, setter: any, chave: string) => {
@@ -788,13 +791,17 @@ const Modal = ({ isOpen, onClose, title, children }: any) => {
   );
 };
 
-const StatusTag = ({ status }: { status: 'confirmado' | 'recusado' | 'pendente' }) => {
-  const config = {
-    confirmado: { bg: '#e8f5e9', color: COLORS.green, label: 'Confirmado' },
-    recusado: { bg: '#ffebee', color: COLORS.red, label: 'Indisponível' },
-    pendente: { bg: COLORS.lightGray, color: COLORS.gray, label: 'Pendente' },
+const StatusTag = ({ status }: { status: string }) => {
+  const tags: any = {
+    confirmado:           { label: "Confirmado",          bg: "#e8f5e9", color: "#1a6b3c" },
+    indisponivel:         { label: "Indisponível",         bg: "#fce8e8", color: "#c0392b" },
+    pendente:             { label: "Pendente",             bg: "#f5f5f7", color: "#6e6e73" },
+    aguardando_validacao: { label: "Aguard. Validação",    bg: "#fff8e1", color: "#f39c12" },
+    serviu:               { label: "Serviu",               bg: "#e8f5e9", color: "#1a6b3c" },
+    furou:                { label: "Furou",                bg: "#fce8e8", color: "#c0392b" },
   };
-  const { bg, color, label } = config[status];
+  const config = tags[status] || tags.pendente;
+  const { bg, color, label } = config;
   return (
     <span style={{ ...styles.statusTag, backgroundColor: bg, color }}>{label}</span>
   );
@@ -803,11 +810,13 @@ const StatusTag = ({ status }: { status: 'confirmado' | 'recusado' | 'pendente' 
 // --- Main App ---
 
 export default function App() {
-  const [loading, setLoading] = useState(true);
-  const [loginCarregando, setLoginCarregando] = useState(false);
-  const [erroLogin, setErroLogin] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [screen, setScreen] = useState<'landing' | 'login' | 'register' | 'waiting' | 'dashboard'>('landing');
+  const [emailLogin, setEmailLogin] = React.useState("");
+  const [senhaLogin, setSenhaLogin] = React.useState("");
+  const [erroLogin, setErroLogin] = React.useState("");
+  const [loginCarregando, setLoginCarregando] = React.useState(false);
+  const [carregando, setCarregando] = React.useState(true);
+  const [tela, setTela] = React.useState("landing");
+  const [usuarioLogado, setUsuarioLogado] = React.useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [scales, setScales] = useState<Scale[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -845,8 +854,8 @@ export default function App() {
       await DB.setNotifs(atualizadas);
       
       // Update local state if the current user is among the recipients
-      if (user && userIds.includes(user.id)) {
-        const minhasNovas = novas.filter(n => n.userId === user.id);
+      if (usuarioLogado && userIds.includes(usuarioLogado.id)) {
+        const minhasNovas = novas.filter(n => n.userId === usuarioLogado.id);
         setNotifications(prev => [...prev, ...minhasNovas]);
       }
       
@@ -857,10 +866,10 @@ export default function App() {
   };
 
   const carregarNotificacoes = async () => {
-    if (!user) return;
+    if (!usuarioLogado) return;
     try {
       const todas = await DB.getNotifs();
-      const minhas = todas.filter((n: any) => n.userId === user.id);
+      const minhas = todas.filter((n: any) => n.userId === usuarioLogado.id);
       setNotifications(minhas);
     } catch (err) {
       console.error("Erro ao carregar notificações:", err);
@@ -868,9 +877,6 @@ export default function App() {
     }
   };
 
-  // Form States
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginSenha, setLoginSenha] = useState('');
   const [regNome, setRegNome] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regSenha, setRegSenha] = useState('');
@@ -894,6 +900,139 @@ export default function App() {
   const [isRankingModalOpen, setIsRankingModalOpen] = useState(false);
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
   const [editingScale, setEditingScale] = useState<Scale | null>(null);
+  const [membroParaExcluir, setMembroParaExcluir] = React.useState<any>(null);
+  const [membroEditandoAreas, setMembroEditandoAreas] = React.useState<any>(null);
+
+  const AREAS_DISPONIVEIS = [
+    "Filmagem — Ministério Geral",
+    "Equipe Íris",
+    "Corte",
+    "Novos Membros",
+  ];
+
+  const verificarEscalasParaValidacao = async () => {
+    try {
+      const escalas = await DB.getSchedules();
+      const agora = new Date();
+      let houveAlteracao = false;
+
+      const escalasAtualizadas = escalas.map((escala: any) => {
+        const dataHoraEscala = new Date(`${escala.data}T${escala.horario}`);
+        const umMinutoDepois = new Date(dataHoraEscala.getTime() + 60 * 1000);
+
+        if (agora < umMinutoDepois) return escala; // Ainda não passou 1 minuto
+
+        const novasConfirmacoes = { ...escala.confirmacoes };
+        let alterou = false;
+
+        // Verificar cada voluntário escalado
+        Object.values(escala.posicoes || {}).forEach((userId: any) => {
+          if (!userId) return;
+          const statusAtual = novasConfirmacoes[userId];
+          // Só muda para aguardando_validacao se ainda for pendente ou confirmado
+          if (statusAtual === "pendente" || statusAtual === "confirmado" || !statusAtual) {
+            novasConfirmacoes[userId] = "aguardando_validacao";
+            alterou = true;
+          }
+        });
+
+        if (alterou) houveAlteracao = true;
+        return alterou ? { ...escala, confirmacoes: novasConfirmacoes } : escala;
+      });
+
+      if (houveAlteracao) {
+        await DB.setSchedules(escalasAtualizadas);
+        setScales(escalasAtualizadas);
+      }
+    } catch (err) {
+      console.error("Erro ao verificar escalas:", err);
+    }
+  };
+
+  const definirPresenca = async (escalaId: string, userId: string, status: string) => {
+    try {
+      const escalas = await DB.getSchedules();
+      const atualizadas = escalas.map((e: any) => {
+        if (e.id !== escalaId) return e;
+        return {
+          ...e,
+          confirmacoes: { ...e.confirmacoes, [userId]: status }
+        };
+      });
+      await DB.setSchedules(atualizadas);
+      setScales(atualizadas);
+
+      // Notificar o voluntário
+      const msg = status === "serviu"
+        ? `Sua presença na escala foi confirmada como ✅ Serviu.`
+        : `Sua presença na escala foi marcada como ❌ Furou.`;
+      await criarNotificacoes([userId], msg);
+
+    } catch (err) {
+      console.error("Erro ao definir presença:", err);
+    }
+  };
+
+  const excluirMembro = async (userId: string) => {
+    try {
+      // Remover usuário
+      await DB.removeItem(DB.KEYS.USERS, userId);
+
+      // Remover das escalas onde estava alocado
+      const escalas = await DB.getSchedules();
+      const escalasAtualizadas = escalas.map((e: any) => {
+        const novasPosicoes = { ...e.posicoes };
+        Object.keys(novasPosicoes).forEach(pos => {
+          if (novasPosicoes[pos] === userId) novasPosicoes[pos] = null;
+        });
+        const novasConfirmacoes = { ...e.confirmacoes };
+        delete novasConfirmacoes[userId];
+        return { ...e, posicoes: novasPosicoes, confirmacoes: novasConfirmacoes };
+      });
+      await DB.setSchedules(escalasAtualizadas);
+
+      // Remover notificações e mensagens do usuário
+      const notifs = await DB.getNotifs();
+      await DB.setNotifs(notifs.filter((n: any) => n.userId !== userId));
+
+      const messages = await DB.getMessages();
+      await DB.setMessages(messages.filter((m: any) =>
+        m.remetenteId !== userId && m.destinatarioId !== userId
+      ));
+
+      // Atualizar estado local
+      setUsers(prev => prev.filter(u => u.id !== userId));
+      setScales(escalasAtualizadas);
+      setMembroParaExcluir(null);
+
+    } catch (err) {
+      console.error("Erro ao excluir membro:", err);
+    }
+  };
+
+  const toggleAreaMembro = async (userId: string, area: string) => {
+    try {
+      const users = await DB.getUsers();
+      const usuario = users.find((u: any) => u.id === userId);
+      if (!usuario) return;
+
+      const areasAtuais = usuario.areas || [];
+      const novasAreas = areasAtuais.includes(area)
+        ? areasAtuais.filter((a: any) => a !== area)
+        : [...areasAtuais, area];
+
+      await DB.updateItem(DB.KEYS.USERS, userId, { areas: novasAreas });
+
+      setUsers(prev => prev.map(u =>
+        u.id === userId ? { ...u, areas: novasAreas } : u
+      ));
+      setMembroEditandoAreas((prev: any) =>
+        prev?.id === userId ? { ...prev, areas: novasAreas } : prev
+      );
+    } catch (err) {
+      console.error("Erro ao editar áreas:", err);
+    }
+  };
 
   const AREAS = ["Filmagem — Ministério Geral", "Equipe Íris", "Corte", "Novos Membros"];
 
@@ -904,14 +1043,105 @@ export default function App() {
   const carregarMensagens  = useDBState(DB.getMessages.bind(DB), setMessages, "messages");
   const carregarCandidaturas = useDBState(DB.getCandidaturas.bind(DB), setCandidaturas, "candidaturas");
 
+  // Ranking
+  const calcularEstatisticas = (userId: string, escalas: Scale[]) => {
+    let serviu = 0, furou = 0, pendente = 0, aguardando = 0;
+
+    escalas.forEach(escala => {
+      const ehVoluntario = Object.values(escala.posicoes || {}).includes(userId);
+      if (!ehVoluntario) return;
+
+      const status = escala.confirmacoes?.[userId];
+      if (status === "serviu")               serviu++;
+      else if (status === "furou")           furou++;
+      else if (status === "aguardando_validacao") aguardando++;
+      else                                   pendente++;
+    });
+
+    return { serviu, furou, pendente, aguardando };
+  };
+
+  const ranking = useMemo(() => {
+    return users
+      .filter(u => u.aprovado)
+      .map(u => {
+        const stats = calcularEstatisticas(u.id, scales);
+        return {
+          id: u.id,
+          nome: u.nome,
+          serviu: stats.serviu,
+          furou: stats.furou,
+          pendente: stats.pendente,
+          aguardando: stats.aguardando
+        };
+      })
+      .sort((a, b) => {
+        if (b.serviu !== a.serviu) return b.serviu - a.serviu;
+        if (a.furou !== b.furou) return a.furou - b.furou;
+        if (a.pendente !== b.pendente) return a.pendente - b.pendente;
+        return a.nome.localeCompare(b.nome);
+      });
+  }, [users, scales]);
+
   useEffect(() => {
     const inicializar = async () => {
-      setLoading(true);
+      setCarregando(true);
       try {
-        // 1. Garantir estrutura do banco
-        await garantirDadosIniciais();
+        // SEMPRE primeiro — seed admin nunca pode falhar
+        await garantirSeedAdmin();
 
-        // 2. Carregar todos os dados no estado React
+        // Tentar restaurar sessão existente
+        let sessaoRestaurada = false;
+        try {
+          const sessao = await DB.getSession();
+          if (sessao?.userId) {
+            const users = await DB.getUsers();
+            const usuario = users.find((u: any) => u.id === sessao.userId);
+
+            if (usuario) {
+              const dias = (new Date().getTime() - new Date(sessao.timestamp).getTime()) / 86400000;
+              if (dias <= 30) {
+                setUsuarioLogado(usuario);
+                if (usuario.papel === "pending" || !usuario.aprovado) {
+                  setTela("espera");
+                } else if (usuario.papel === "admin" || usuario.papel === "leader") {
+                  setTela("dashboardAdmin");
+                } else {
+                  setTela("dashboardVoluntario");
+                }
+                sessaoRestaurada = true;
+
+                // Sincronização ao Reabrir o App
+                const [usersData, schedulesData, notifsData, postsData, messagesData] = await Promise.all([
+                  DB.getUsers(),
+                  DB.getSchedules(),
+                  DB.getNotifs(),
+                  DB.getPosts(),
+                  DB.getMessages(),
+                ]);
+
+                setUsers(usersData);
+                setScales(schedulesData);
+                setNotifications(notifsData.filter((n: any) => n.userId === usuario.id));
+                setPosts(postsData);
+                setMessages(messagesData);
+                
+                // Verificar escalas para validação na inicialização
+                await verificarEscalasParaValidacao();
+              } else {
+                await DB.delete(DB.KEYS.SESSION);
+              }
+            }
+          }
+        } catch {
+          sessaoRestaurada = false;
+        }
+
+        if (!sessaoRestaurada) {
+          setTela("landing");
+        }
+
+        // Carregar outros dados no estado React (opcional, mas bom para manter sincronia)
         await Promise.all([
           carregarUsuarios(),
           carregarEscalas(),
@@ -921,38 +1151,11 @@ export default function App() {
           carregarCandidaturas(),
         ]);
 
-        // 3. Restaurar sessão
-        const sessao = await DB.getSession();
-        if (sessao?.userId) {
-          const users = await DB.getUsers();
-          const usuario = users.find((u: any) => u.id === sessao.userId);
-
-          if (usuario) {
-            const agora = new Date();
-            const criacao = new Date(sessao.timestamp);
-            const diasPassados = (agora.getTime() - criacao.getTime()) / (1000 * 60 * 60 * 24);
-
-            if (diasPassados <= 30) {
-              setUser(usuario);
-              if (usuario.papel === "pending" || !usuario.aprovado) {
-                setScreen("waiting");
-              } else {
-                setScreen("dashboard");
-              }
-              setLoading(false);
-              return;
-            }
-          }
-          // Sessão inválida — limpar
-          await DB.delete(DB.KEYS.SESSION);
-        }
-
-        setScreen("landing");
       } catch (err) {
-        console.error("Erro crítico na inicialização:", err);
-        setScreen("landing");
+        console.error("❌ Erro na inicialização:", err);
+        setTela("landing");
       } finally {
-        setLoading(false);
+        setCarregando(false);
       }
     };
 
@@ -971,30 +1174,45 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === "notifs") carregarNotificacoes();
+    verificarEscalasParaValidacao();
   }, [activeTab]);
 
-  const handleLogin = async () => {
+  const fazerLogin = async () => {
+    if (loginCarregando) return;
+    setLoginCarregando(true);
+    setErroLogin("");
+
     try {
-      setLoginCarregando(true);
-      setErroLogin(null);
-      
-      const users = await DB.getUsers();
+      // Passo 1 — garantir seed antes de qualquer coisa
+      const users = await garantirSeedAdmin();
 
-      const emailNormalizado = loginEmail.trim().toLowerCase();
-      const senhaNormalizada = loginSenha.trim();
+      // Passo 2 — normalizar inputs
+      const emailDigitado = (emailLogin || "").trim().toLowerCase();
+      const senhaDigitada = (senhaLogin || "").trim();
 
-      const usuario = users.find(
-        (u: any) =>
-          u.email.trim().toLowerCase() === emailNormalizado &&
-          u.senha.trim() === senhaNormalizada
-      );
+      console.log("🔑 Tentativa de login:", emailDigitado);
+      console.log("👥 Usuários disponíveis:", users.map((u: any) => ({ email: u.email, senha: u.senha, papel: u.papel })));
+
+      if (!emailDigitado || !senhaDigitada) {
+        setErroLogin("Preencha e-mail e senha.");
+        return;
+      }
+
+      // Passo 3 — buscar usuário com comparação segura
+      const usuario = users.find((u: any) => {
+        const emailSalvo = (u.email || "").trim().toLowerCase();
+        const senhaSalva = (u.senha || "").trim();
+        return emailSalvo === emailDigitado && senhaSalva === senhaDigitada;
+      });
+
+      console.log("👤 Usuário encontrado:", usuario);
 
       if (!usuario) {
         setErroLogin("E-mail ou senha inválidos.");
         return;
       }
 
-      setUser(usuario);
+      // Passo 4 — salvar sessão
       await DB.setSession({
         userId: usuario.id,
         email: usuario.email,
@@ -1002,16 +1220,24 @@ export default function App() {
         timestamp: new Date().toISOString(),
       });
 
-      if (usuario.papel === "admin" || usuario.papel === "leader") {
-        setScreen("dashboard");
-      } else if (usuario.papel === "pending" || !usuario.aprovado) {
-        setScreen("waiting");
-      } else {
-        setScreen("dashboard");
+      // Passo 5 — redirecionar conforme papel
+      setUsuarioLogado(usuario);
+
+      if (usuario.papel === "pending" || !usuario.aprovado) {
+        setTela("espera");
+        return;
       }
+
+      if (usuario.papel === "admin" || usuario.papel === "leader") {
+        setTela("dashboardAdmin");
+        return;
+      }
+
+      setTela("dashboardVoluntario");
+
     } catch (err) {
-      console.error("Erro no login:", err);
-      setErroLogin("Erro ao tentar entrar. Tente novamente.");
+      console.error("❌ Erro no login:", err);
+      setErroLogin("Erro inesperado. Tente novamente.");
     } finally {
       setLoginCarregando(false);
     }
@@ -1061,8 +1287,8 @@ export default function App() {
     const ids = await buscarLideresEAdmins();
     await criarNotificacoes(ids, `Novo membro aguardando aprovação: ${newUser.nome}`);
 
-    setUser(newUser);
-    setScreen('waiting');
+    setUsuarioLogado(newUser);
+    setTela('espera');
   };
 
   const handleApply = async () => {
@@ -1109,8 +1335,8 @@ export default function App() {
     } catch (err) {
       console.error("Erro ao limpar sessão:", err);
     } finally {
-      setUser(null);
-      setScreen('landing');
+      setUsuarioLogado(null);
+      setTela('landing');
       setActiveTab('scales');
     }
   };
@@ -1126,10 +1352,11 @@ export default function App() {
       
       await criarNotificacoes([userId], "Seu cadastro foi aprovado! Bem-vindo ao ministério.");
       
-      if (user?.id === userId) {
+      if (usuarioLogado?.id === userId) {
+        setUsuarioLogado({ ...usuarioLogado, ...changes });
         await DB.setSession({
-          userId: user.id,
-          email: user.email,
+          userId: usuarioLogado.id,
+          email: usuarioLogado.email,
           papel: 'volunteer',
           timestamp: new Date().toISOString(),
         });
@@ -1146,10 +1373,11 @@ export default function App() {
     
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, papel: newPapel } : u));
     
-    if (user?.id === userId) {
+    if (usuarioLogado?.id === userId) {
+      setUsuarioLogado({ ...usuarioLogado, papel: newPapel });
       await DB.setSession({
-        userId: user.id,
-        email: user.email,
+        userId: usuarioLogado.id,
+        email: usuarioLogado.email,
         papel: newPapel,
         timestamp: new Date().toISOString(),
       });
@@ -1184,7 +1412,7 @@ export default function App() {
   };
 
   const handleSaveScale = async (scaleData: any) => {
-    const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
+    const isAdminOrLeader = usuarioLogado?.papel === 'admin' || usuarioLogado?.papel === 'leader';
     if (!isAdminOrLeader) return;
     
     if (editingScale) {
@@ -1195,7 +1423,7 @@ export default function App() {
         id: Math.random().toString(36).substr(2, 9),
         ...scaleData,
         confirmacoes: {},
-        criadoPor: user?.id || ''
+        criadoPor: usuarioLogado?.id || ''
       };
       
       await DB.addItem(DB.KEYS.SCHEDULES, newScale);
@@ -1215,7 +1443,7 @@ export default function App() {
   };
 
   const handleDeleteScale = async (id: string) => {
-    const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
+    const isAdminOrLeader = usuarioLogado?.papel === 'admin' || usuarioLogado?.papel === 'leader';
     if (!isAdminOrLeader) return;
     
     if (confirm('Deseja excluir esta escala?')) {
@@ -1225,7 +1453,7 @@ export default function App() {
   };
 
   const handleConfirmPresence = async (scaleId: string, status: 'confirmado' | 'recusado') => {
-    const changes = { confirmacoes: { ...scales.find(s => s.id === scaleId)?.confirmacoes, [user!.id]: status } };
+    const changes = { confirmacoes: { ...scales.find(s => s.id === scaleId)?.confirmacoes, [usuarioLogado!.id]: status } };
     await DB.updateItem(DB.KEYS.SCHEDULES, scaleId, changes);
     setScales(prev => prev.map(s => s.id === scaleId ? { ...s, ...changes } : s));
   };
@@ -1233,12 +1461,12 @@ export default function App() {
   const handlePost = async (conteudo: string) => {
     const newPost: Post = {
       id: Math.random().toString(36).substr(2, 9),
-      autorId: user!.id,
-      autorNome: user!.nome,
-      autorFoto: user!.fotoPerfil,
+      autorId: usuarioLogado!.id,
+      autorNome: usuarioLogado!.nome,
+      autorFoto: usuarioLogado!.fotoPerfil,
       conteudo,
       data: new Date().toISOString(),
-      lida: [user!.id],
+      lida: [usuarioLogado!.id],
       likes: []
     };
     
@@ -1247,21 +1475,21 @@ export default function App() {
     
     // Notify all approved members
     const approvedUsers = users.filter(u => u.aprovado);
-    const idsToNotify = approvedUsers.filter(u => u.id !== user!.id).map(u => u.id);
+    const idsToNotify = approvedUsers.filter(u => u.id !== usuarioLogado!.id).map(u => u.id);
     if (idsToNotify.length > 0) {
-      await criarNotificacoes(idsToNotify, `Novo aviso de ${user!.nome}: ${conteudo.substring(0, 50)}...`);
+      await criarNotificacoes(idsToNotify, `Novo aviso de ${usuarioLogado!.nome}: ${conteudo.substring(0, 50)}...`);
     }
   };
 
   const handleToggleLike = async (postId: string) => {
-    if (!user) return;
+    if (!usuarioLogado) return;
     const post = posts.find(p => p.id === postId);
     if (!post) return;
 
     const likes = post.likes || [];
-    const newLikes = likes.includes(user.id) 
-      ? likes.filter(id => id !== user.id) 
-      : [...likes, user.id];
+    const newLikes = likes.includes(usuarioLogado.id) 
+      ? likes.filter(id => id !== usuarioLogado.id) 
+      : [...likes, usuarioLogado.id];
     
     await DB.updateItem(DB.KEYS.POSTS, postId, { likes: newLikes });
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, likes: newLikes } : p));
@@ -1276,8 +1504,8 @@ export default function App() {
 
   const markPostAsRead = async (id: string) => {
     const post = posts.find(p => p.id === id);
-    if (post && !post.lida.includes(user!.id)) {
-      const newLida = [...post.lida, user!.id];
+    if (post && !post.lida.includes(usuarioLogado!.id)) {
+      const newLida = [...post.lida, usuarioLogado!.id];
       await DB.updateItem(DB.KEYS.POSTS, id, { lida: newLida });
       setPosts(prev => prev.map(p => p.id === id ? { ...p, lida: newLida } : p));
     }
@@ -1286,7 +1514,7 @@ export default function App() {
   const handleSendMessage = async (destinatarioId: string, conteudo: string, isSystem = false, senderIdOverride?: string) => {
     const newMessage: Message = {
       id: Math.random().toString(36).substr(2, 9),
-      remetenteId: senderIdOverride || user!.id,
+      remetenteId: senderIdOverride || usuarioLogado!.id,
       destinatarioId,
       conteudo,
       data: new Date().toISOString(),
@@ -1302,14 +1530,14 @@ export default function App() {
     const msg = messages.find(m => m.id === messageId);
     if (!msg) return;
 
-    const reacoes = { ...(msg.reacoes || {}), [user!.id]: emoji };
+    const reacoes = { ...(msg.reacoes || {}), [usuarioLogado!.id]: emoji };
     await DB.updateItem(DB.KEYS.MESSAGES, messageId, { reacoes });
     setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reacoes } : m));
   };
 
   const markMessagesAsRead = async (otherUserId: string) => {
     const unreadIds = messages
-      .filter(m => m.remetenteId === otherUserId && m.destinatarioId === user!.id && !m.lida)
+      .filter(m => m.remetenteId === otherUserId && m.destinatarioId === usuarioLogado!.id && !m.lida)
       .map(m => m.id);
     
     if (unreadIds.length === 0) return;
@@ -1324,7 +1552,7 @@ export default function App() {
   };
 
   const checkAutoFails = async (currentScales: Scale[]) => {
-    if (!user) return;
+    if (!usuarioLogado) return;
     const now = new Date();
     let changed = false;
     const updatedScales = [...currentScales];
@@ -1370,14 +1598,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (screen === 'dashboard') {
+    if (tela === 'dashboardAdmin' || tela === 'dashboardVoluntario') {
       checkAutoFails(scales);
     }
-  }, [screen, activeTab]);
+  }, [tela, activeTab]);
 
   // --- Render Helpers ---
 
-  if (loading) {
+  if (carregando) {
     return (
       <div style={{ ...styles.container, justifyContent: 'center' }}>
         <motion.div 
@@ -1404,8 +1632,8 @@ export default function App() {
       </div>
       
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <Button onClick={() => setScreen('login')}>Entrar</Button>
-        <Button variant="secondary" onClick={() => setScreen('register')}>Criar conta</Button>
+        <Button onClick={() => setTela('login')}>Entrar</Button>
+        <Button variant="secondary" onClick={() => setTela('register')}>Criar conta</Button>
       </div>
 
       <div 
@@ -1456,18 +1684,49 @@ export default function App() {
 
   const renderLogin = () => (
     <div style={{ ...styles.appWrapper, padding: '40px 20px' }}>
-      <button onClick={() => setScreen('landing')} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: COLORS.gray, marginBottom: '40px' }}>
+      <button onClick={() => setTela('landing')} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: COLORS.gray, marginBottom: '40px' }}>
         <ChevronLeft size={20} /> Voltar
       </button>
       <div style={{ marginBottom: '20px' }}>
         <LogoFilmka size="large" />
       </div>
       <h2 style={{ fontSize: '28px', fontWeight: 700, marginBottom: '30px' }}>Entrar</h2>
-      <Input label="Email" value={loginEmail} onChange={setLoginEmail} placeholder="seu@email.com" />
-      <Input label="Senha" type="password" value={loginSenha} onChange={setLoginSenha} placeholder="Sua senha" />
-      {erroLogin && <p style={{ color: COLORS.red, fontSize: '14px', marginTop: '10px' }}>{erroLogin}</p>}
+      
+      <div style={{ marginBottom: '16px' }}>
+        <label style={styles.label}>E-mail</label>
+        <input
+          type="email"
+          value={emailLogin}
+          onChange={e => setEmailLogin(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && fazerLogin()}
+          placeholder="E-mail"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          style={styles.input}
+        />
+      </div>
+
+      <div style={{ marginBottom: '16px' }}>
+        <label style={styles.label}>Senha</label>
+        <input
+          type="password"
+          value={senhaLogin}
+          onChange={e => setSenhaLogin(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && fazerLogin()}
+          placeholder="Senha"
+          style={styles.input}
+        />
+      </div>
+
+      {erroLogin ? (
+        <p style={{ color: "#ff3b30", fontSize: "13px", textAlign: "center", marginTop: '10px' }}>
+          {erroLogin}
+        </p>
+      ) : null}
+
       <button 
-        onClick={handleLogin} 
+        onClick={fazerLogin} 
         disabled={loginCarregando}
         style={{ 
           ...styles.button,
@@ -1475,6 +1734,8 @@ export default function App() {
           marginTop: '20px',
           opacity: loginCarregando ? 0.6 : 1,
           cursor: loginCarregando ? "not-allowed" : "pointer",
+          backgroundColor: COLORS.black,
+          color: COLORS.white,
         }}
       >
         {loginCarregando ? "Entrando..." : "Entrar"}
@@ -1484,7 +1745,7 @@ export default function App() {
 
   const renderRegister = () => (
     <div style={{ ...styles.appWrapper, padding: '40px 20px' }}>
-      <button onClick={() => setScreen('landing')} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: COLORS.gray, marginBottom: '40px' }}>
+      <button onClick={() => setTela('landing')} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: COLORS.gray, marginBottom: '40px' }}>
         <ChevronLeft size={20} /> Voltar
       </button>
       <div style={{ marginBottom: '20px' }}>
@@ -1551,18 +1812,18 @@ export default function App() {
       </div>
       <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '16px' }}>Perfil em análise</h2>
       <p style={{ color: COLORS.gray, lineHeight: '1.5', marginBottom: '40px' }}>
-        Olá, {user?.nome}! Seu cadastro foi recebido. Um líder ou administrador irá revisar e aprovar seu acesso em breve.
+        Olá, {usuarioLogado?.nome}! Seu cadastro foi recebido. Um líder ou administrador irá revisar e aprovar seu acesso em breve.
       </p>
       <Button variant="secondary" onClick={handleLogout} style={{ width: '100%' }}>Sair</Button>
     </div>
   );
 
   const renderDashboard = () => {
-    const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
-    const unreadPostsCount = posts.filter(p => user && !p.lida.includes(user.id)).length;
-    const unreadNotifsCount = notifications.filter(n => user && n.userId === user.id && !n.lida).length;
+    const isAdminOrLeader = usuarioLogado?.papel === 'admin' || usuarioLogado?.papel === 'leader';
+    const unreadPostsCount = posts.filter(p => usuarioLogado && !p.lida.includes(usuarioLogado.id)).length;
+    const unreadNotifsCount = notifications.filter(n => usuarioLogado && n.userId === usuarioLogado.id && !n.lida).length;
     const totalUnreadAvisos = unreadPostsCount + unreadNotifsCount;
-    const unreadMessagesCount = messages.filter(m => m.destinatarioId === user?.id && !m.lida).length;
+    const unreadMessagesCount = messages.filter(m => m.destinatarioId === usuarioLogado?.id && !m.lida).length;
     
     return (
       <div style={styles.appWrapper}>
@@ -1582,35 +1843,39 @@ export default function App() {
               </button>
             )}
             <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: COLORS.lightGray, overflow: 'hidden' }}>
-              {user?.fotoPerfil ? <img src={user.fotoPerfil} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" /> : <UserIcon size={20} style={{ margin: '6px' }} />}
+              {usuarioLogado?.fotoPerfil ? <img src={usuarioLogado.fotoPerfil} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" /> : <UserIcon size={20} style={{ margin: '6px' }} />}
             </div>
           </div>
         </div>
 
         <div style={styles.content}>
-          {activeTab === 'calendar' && <CalendarTab scales={scales} user={user} users={users} onOpenRanking={() => setIsRankingModalOpen(true)} />}
+          {activeTab === 'calendar' && <CalendarTab scales={scales} usuarioLogado={usuarioLogado} users={users} ranking={ranking} onOpenRanking={() => setIsRankingModalOpen(true)} />}
           {activeTab === 'scales' && (
             <ScalesTab 
               scales={scales} 
-              user={user!} 
+              usuarioLogado={usuarioLogado!} 
+              users={users}
               onConfirm={handleConfirmPresence} 
               onEdit={(s: Scale) => { setEditingScale(s); setIsScaleModalOpen(true); }} 
-              onDelete={handleDeleteScale} 
+              onDelete={handleDeleteScale}
+              definirPresenca={definirPresenca}
             />
           )}
           {activeTab === 'members' && (
             <MembersTab 
               users={users} 
-              currentUser={user!} 
+              currentUser={usuarioLogado!} 
               onApprove={handleApproveUser} 
               onPromote={handlePromoteUser} 
+              onDeleteMember={(u: any) => setMembroParaExcluir(u)}
+              onEditAreas={(u: any) => setMembroEditandoAreas(u)}
             />
           )}
           {activeTab === 'notifs' && (
             <AvisosTab 
               posts={posts} 
               notifications={notifications}
-              user={user!} 
+              usuarioLogado={usuarioLogado!} 
               users={users}
               onPost={handlePost} 
               onDeletePost={handleDeletePost} 
@@ -1625,7 +1890,7 @@ export default function App() {
             <MessagesTab 
               users={users} 
               messages={messages} 
-              currentUser={user!} 
+              currentUser={usuarioLogado!} 
               onSendMessage={handleSendMessage} 
               onMarkRead={markMessagesAsRead} 
               onReact={handleReactToMessage}
@@ -1635,10 +1900,10 @@ export default function App() {
           )}
           {activeTab === 'profile' && (
             <ProfileTab 
-              user={user!} 
+              usuarioLogado={usuarioLogado!} 
               users={users} 
               setUsers={setUsers} 
-              setUser={setUser} 
+              setUser={setUsuarioLogado} 
               onLogout={handleLogout} 
             />
           )}
@@ -1664,7 +1929,7 @@ export default function App() {
             <span style={styles.navLabel}>Avisos</span>
             {totalUnreadAvisos > 0 && <span style={styles.badge}>{totalUnreadAvisos}</span>}
           </div>
-          {user?.papel !== 'pending' && (
+          {usuarioLogado?.papel !== 'pending' && (
             <div style={{ ...styles.navItem, ...(activeTab === 'messages' ? styles.navItemActive : {}) }} onClick={() => setActiveTab('messages')}>
               <div style={{ position: 'relative' }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1693,26 +1958,92 @@ export default function App() {
         <RankingModal 
           isOpen={isRankingModalOpen} 
           onClose={() => setIsRankingModalOpen(false)} 
-          ranking={users
-            .filter(u => u.aprovado)
-            .map(u => {
-              const uScales = scales.filter(s => Object.values(s.posicoes).includes(u.id));
-              return {
-                id: u.id,
-                nome: u.nome,
-                serviu: uScales.filter(s => s.confirmacoes[u.id] === 'confirmado').length,
-                furou: uScales.filter(s => s.confirmacoes[u.id] === 'furou' || s.confirmacoes[u.id] === 'recusado').length,
-                pendente: uScales.filter(s => !s.confirmacoes[u.id]).length
-              };
-            })
-            .sort((a, b) => {
-              if (b.serviu !== a.serviu) return b.serviu - a.serviu;
-              if (a.furou !== b.furou) return a.furou - b.furou;
-              if (a.pendente !== b.pendente) return a.pendente - b.pendente;
-              return a.nome.localeCompare(b.nome);
-            })
-          }
+          ranking={ranking}
         />
+
+        {/* Modal de confirmação de exclusão */}
+        {membroParaExcluir && (
+          <div style={{
+            position: "fixed", inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 9999, padding: "20px",
+          }}>
+            <div style={{
+              background: "white", borderRadius: "16px",
+              padding: "24px", width: "100%", maxWidth: "320px",
+              textAlign: "center",
+            }}>
+              <p style={{ fontSize: "17px", fontWeight: "600", color: "#1d1d1f", marginBottom: "8px" }}>
+                Excluir membro?
+              </p>
+              <p style={{ fontSize: "14px", color: "#6e6e73", marginBottom: "24px" }}>
+                "{membroParaExcluir?.nome}" será removido permanentemente do sistema.
+              </p>
+              <div style={{ display: "flex", gap: "12px" }}>
+                <button onClick={() => setMembroParaExcluir(null)}
+                  style={{ flex: 1, padding: "12px", borderRadius: "10px",
+                    border: "1px solid #e5e5ea", background: "white",
+                    fontSize: "15px", cursor: "pointer" }}>
+                  Cancelar
+                </button>
+                <button onClick={() => excluirMembro(membroParaExcluir.id)}
+                  style={{ flex: 1, padding: "12px", borderRadius: "10px",
+                    border: "none", background: "#ff3b30", color: "white",
+                    fontSize: "15px", fontWeight: "600", cursor: "pointer" }}>
+                  Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de edição de áreas */}
+        {membroEditandoAreas && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 9999, padding: "20px" }}>
+            <div style={{ background: "white", borderRadius: "16px",
+              padding: "24px", width: "100%", maxWidth: "360px" }}>
+              <p style={{ fontSize: "17px", fontWeight: "600", marginBottom: "16px" }}>
+                Áreas de {membroEditandoAreas?.nome}
+              </p>
+              {AREAS_DISPONIVEIS.map(area => {
+                const selecionada = (membroEditandoAreas?.areas || []).includes(area);
+                return (
+                  <div key={area}
+                    onClick={() => toggleAreaMembro(membroEditandoAreas.id, area)}
+                    style={{ display: "flex", alignItems: "center", gap: "12px",
+                      padding: "12px 0", borderBottom: "1px solid #f0f0f0",
+                      cursor: "pointer" }}>
+                    <div style={{
+                      width: "22px", height: "22px", borderRadius: "50%",
+                      border: selecionada ? "none" : "1.5px solid #c7c7cc",
+                      background: selecionada ? "#1a6b3c" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      flexShrink: 0,
+                    }}>
+                      {selecionada && (
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="1.8"
+                            strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </div>
+                    <span style={{ fontSize: "15px", color: "#1d1d1f" }}>{area}</span>
+                  </div>
+                );
+              })}
+              <button
+                onClick={() => setMembroEditandoAreas(null)}
+                style={{ width: "100%", marginTop: "20px", padding: "13px",
+                  borderRadius: "12px", border: "none", background: "#1d1d1f",
+                  color: "white", fontSize: "15px", fontWeight: "600", cursor: "pointer" }}>
+                Concluído
+              </button>
+            </div>
+          </div>
+        )}
 
         <Modal isOpen={isCandidacyModalOpen} onClose={() => setIsCandidacyModalOpen(false)} title="Detalhes da Candidatura">
           {selectedCandidacy && (
@@ -1737,7 +2068,7 @@ export default function App() {
     );
   };
 
-  if (loading) {
+  if (carregando) {
     return (
       <div style={{ ...styles.container, justifyContent: 'center', alignItems: 'center' }}>
         <div style={{ 
@@ -1760,18 +2091,19 @@ export default function App() {
 
   return (
     <div style={styles.container}>
-      {screen === 'landing' && renderLanding()}
-      {screen === 'login' && renderLogin()}
-      {screen === 'register' && renderRegister()}
-      {screen === 'waiting' && renderWaiting()}
-      {screen === 'dashboard' && renderDashboard()}
+      {tela === 'landing' && renderLanding()}
+      {tela === 'login' && renderLogin()}
+      {tela === 'register' && renderRegister()}
+      {tela === 'espera' && renderWaiting()}
+      {tela === 'dashboardAdmin' && renderDashboard()}
+      {tela === 'dashboardVoluntario' && renderDashboard()}
     </div>
   );
 }
 
 // --- Tab Components ---
 
-const CalendarTab = ({ scales, user, users, onOpenRanking }: { scales: Scale[], user: User | null, users: User[], onOpenRanking: () => void }) => {
+const CalendarTab = ({ scales, usuarioLogado, users, ranking, onOpenRanking }: { scales: Scale[], usuarioLogado: User | null, users: User[], ranking: any[], onOpenRanking: () => void }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
   const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay();
@@ -1782,7 +2114,7 @@ const CalendarTab = ({ scales, user, users, onOpenRanking }: { scales: Scale[], 
 
   const userScales = scales.filter(s => {
     const pos = s.posicoes;
-    return [pos.corte, pos.camera1, pos.camera2, pos.camera3].includes(user?.id || '');
+    return Object.values(pos).includes(usuarioLogado?.id || '');
   });
 
   const isDayEscalated = (day: number) => {
@@ -1791,29 +2123,25 @@ const CalendarTab = ({ scales, user, users, onOpenRanking }: { scales: Scale[], 
   };
 
   // Stats
-  const totalParticipations = userScales.filter(s => s.confirmacoes[user?.id || ''] === 'confirmado').length;
-  const totalFails = userScales.filter(s => s.confirmacoes[user?.id || ''] === 'furou' || s.confirmacoes[user?.id || ''] === 'recusado').length;
-  const totalPending = userScales.filter(s => !s.confirmacoes[user?.id || '']).length;
-
-  // Ranking
-  const ranking = users
-    .filter(u => u.aprovado)
-    .map(u => {
-      const uScales = scales.filter(s => Object.values(s.posicoes).includes(u.id));
-      return {
-        id: u.id,
-        nome: u.nome,
-        serviu: uScales.filter(s => s.confirmacoes[u.id] === 'confirmado').length,
-        furou: uScales.filter(s => s.confirmacoes[u.id] === 'furou' || s.confirmacoes[u.id] === 'recusado').length,
-        pendente: uScales.filter(s => !s.confirmacoes[u.id]).length
-      };
-    })
-    .sort((a, b) => {
-      if (b.serviu !== a.serviu) return b.serviu - a.serviu;
-      if (a.furou !== b.furou) return a.furou - b.furou;
-      if (a.pendente !== b.pendente) return a.pendente - b.pendente;
-      return a.nome.localeCompare(b.nome);
+  const calcularEstatisticas = (userId: string, escalas: Scale[]) => {
+    let serviu = 0, furou = 0, pendente = 0, aguardando = 0;
+    escalas.forEach(escala => {
+      const ehVoluntario = Object.values(escala.posicoes || {}).includes(userId);
+      if (!ehVoluntario) return;
+      const status = escala.confirmacoes?.[userId];
+      if (status === "serviu")               serviu++;
+      else if (status === "furou")           furou++;
+      else if (status === "aguardando_validacao") aguardando++;
+      else                                   pendente++;
     });
+    return { serviu, furou, pendente, aguardando };
+  };
+
+  const stats = usuarioLogado ? calcularEstatisticas(usuarioLogado.id, scales) : { serviu: 0, furou: 0, pendente: 0, aguardando: 0 };
+  const totalParticipations = stats.serviu;
+  const totalFails = stats.furou;
+  const totalPending = stats.pendente;
+  const totalAguardando = stats.aguardando;
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
@@ -1878,15 +2206,15 @@ const CalendarTab = ({ scales, user, users, onOpenRanking }: { scales: Scale[], 
   );
 };
 
-const AvisosTab = ({ posts, notifications, user, users, onPost, onDeletePost, onMarkRead, onMarkNotifRead, onToggleLike, onNavigateToMembers, onViewCandidacy }: any) => {
+const AvisosTab = ({ posts, notifications, usuarioLogado, users, onPost, onDeletePost, onMarkRead, onMarkNotifRead, onToggleLike, onNavigateToMembers, onViewCandidacy }: any) => {
   const [activeSubTab, setActiveSubTab] = useState<'posts' | 'notifs'>('posts');
   const [newPost, setNewPost] = useState('');
-  const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
+  const isAdminOrLeader = usuarioLogado?.papel === 'admin' || usuarioLogado?.papel === 'leader';
 
   const sortedPosts = [...posts].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
   
-  const unreadPostsCount = posts.filter((p: any) => !p.lida.includes(user.id)).length;
-  const unreadNotifsCount = notifications.filter((n: any) => n.userId === user.id && !n.lida).length;
+  const unreadPostsCount = posts.filter((p: any) => !p.lida.includes(usuarioLogado.id)).length;
+  const unreadNotifsCount = notifications.filter((n: any) => n.userId === usuarioLogado.id && !n.lida).length;
 
   const getRelativeTime = (dateStr: string) => {
     const now = new Date();
@@ -1977,7 +2305,7 @@ const AvisosTab = ({ posts, notifications, user, users, onPost, onDeletePost, on
 
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {sortedPosts.map((post) => {
-              const isRead = post.lida.includes(user.id);
+              const isRead = post.lida.includes(usuarioLogado.id);
               return (
                 <div 
                   key={post.id} 
@@ -2001,14 +2329,14 @@ const AvisosTab = ({ posts, notifications, user, users, onPost, onDeletePost, on
                         <span style={{ color: COLORS.gray, fontSize: '12px', backgroundColor: COLORS.lightGray, padding: '1px 6px', borderRadius: '4px' }}>{getAutorFuncao(post.autorId)}</span>
                         <span style={{ color: COLORS.gray, fontSize: '13px' }}>· {getRelativeTime(post.data)}</span>
                       </div>
-                      {isAdminOrLeader && post.autorId === user.id && (
+                      {isAdminOrLeader && post.autorId === usuarioLogado.id && (
                         <button onClick={(e) => { e.stopPropagation(); onDeletePost(post.id); }} style={{ background: 'none', border: 'none', color: COLORS.gray, cursor: 'pointer' }}>
                           <Trash2 size={16} />
                         </button>
                       )}
                     </div>
                     <p style={{ fontSize: '15px', lineHeight: '1.4', color: COLORS.black }}>{post.conteudo}</p>
-                    <LikeButton post={post} currentUserId={user.id} onToggle={onToggleLike} />
+                    <LikeButton post={post} currentUserId={usuarioLogado.id} onToggle={onToggleLike} />
                   </div>
                 </div>
               );
@@ -2018,7 +2346,7 @@ const AvisosTab = ({ posts, notifications, user, users, onPost, onDeletePost, on
       ) : (
         <NotifsTab 
           notifications={notifications} 
-          user={user} 
+          usuarioLogado={usuarioLogado} 
           onMarkAsRead={onMarkNotifRead} 
           onNavigateToMembers={onNavigateToMembers}
           onViewCandidacy={onViewCandidacy}
@@ -2431,18 +2759,32 @@ const CandidacySuccessModal = ({ isOpen, onClose }: any) => {
   );
 };
 
-const ScalesTab = ({ scales, user, onConfirm, onEdit, onDelete }: { scales: Scale[], user: User, onConfirm: any, onEdit: any, onDelete: any }) => {
-  const isAdminOrLeader = user?.papel === 'admin' || user?.papel === 'leader';
+const ScalesTab = ({ scales, usuarioLogado, users, onConfirm, onEdit, onDelete, definirPresenca }: { scales: Scale[], usuarioLogado: User, users: User[], onConfirm: any, onEdit: any, onDelete: any, definirPresenca: any }) => {
+  const isAdminOrLeader = usuarioLogado?.papel === 'admin' || usuarioLogado?.papel === 'leader';
   const today = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
   
   const upcomingScales = scales.filter(s => new Date(s.data) >= new Date(new Date().setHours(0,0,0,0))).sort((a,b) => new Date(a.data).getTime() - new Date(b.data).getTime());
   const pastScales = scales.filter(s => new Date(s.data) < new Date(new Date().setHours(0,0,0,0))).sort((a,b) => new Date(b.data).getTime() - new Date(a.data).getTime());
 
+  const aguardandoValidacao: any[] = [];
+  if (isAdminOrLeader) {
+    scales.forEach(escala => {
+      Object.entries(escala.posicoes || {}).forEach(([posicao, userId]) => {
+        if (userId && escala.confirmacoes?.[userId] === "aguardando_validacao") {
+          const usuario = users.find(u => u.id === userId);
+          if (usuario) {
+            aguardandoValidacao.push({ escala, usuario, posicao });
+          }
+        }
+      });
+    });
+  }
+
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       <div style={{ marginBottom: '24px' }}>
         <p style={{ color: COLORS.gray, fontSize: '14px' }}>{today}</p>
-        <h2 style={{ fontSize: '24px', fontWeight: 800 }}>Olá, {user?.nome.split(' ')[0]}!</h2>
+        <h2 style={{ fontSize: '24px', fontWeight: 800 }}>Olá, {usuarioLogado?.nome.split(' ')[0]}!</h2>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
@@ -2456,6 +2798,62 @@ const ScalesTab = ({ scales, user, onConfirm, onEdit, onDelete }: { scales: Scal
         </div>
       </div>
 
+      {aguardandoValidacao.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: '24px', border: `1px solid ${COLORS.border}` }}>
+          <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px', color: '#f39c12' }}>Aguardando Validação</h3>
+          {aguardandoValidacao.map(({ escala, usuario, posicao }, idx) => (
+            <div key={`${escala.id}-${usuario.id}-${idx}`} style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "10px 0",
+              borderBottom: idx === aguardandoValidacao.length - 1 ? "none" : "1px solid #f0f0f0",
+            }}>
+              <div>
+                <p style={{ fontSize: "14px", fontWeight: "600", color: "#1d1d1f" }}>
+                  {usuario.nome}
+                </p>
+                <p style={{ fontSize: "12px", color: "#6e6e73" }}>
+                  {escala.titulo} — {posicao}
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={() => definirPresenca(escala.id, usuario.id, "serviu")}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#1a6b3c",
+                    color: "white",
+                    fontSize: "13px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  Serviu
+                </button>
+                <button
+                  onClick={() => definirPresenca(escala.id, usuario.id, "furou")}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#1d1d1f",
+                    color: "white",
+                    fontSize: "13px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  Furou
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>Próximas Escalas</h3>
       {upcomingScales.length === 0 ? (
         <p style={{ textAlign: 'center', color: COLORS.gray, padding: '40px 0' }}>Nenhuma escala agendada.</p>
@@ -2464,7 +2862,7 @@ const ScalesTab = ({ scales, user, onConfirm, onEdit, onDelete }: { scales: Scal
           <ScaleCard 
             key={s.id} 
             scale={s} 
-            user={user} 
+            usuarioLogado={usuarioLogado} 
             onConfirm={onConfirm}
             onEdit={isAdminOrLeader ? () => onEdit(s) : undefined}
             onDelete={isAdminOrLeader ? () => onDelete(s.id) : undefined}
@@ -2477,7 +2875,7 @@ const ScalesTab = ({ scales, user, onConfirm, onEdit, onDelete }: { scales: Scal
           <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '24px 0 16px' }}>Histórico</h3>
           <div style={{ opacity: 0.6 }}>
             {pastScales.map(s => (
-              <ScaleCard key={s.id} scale={s} user={user} isPast />
+              <ScaleCard key={s.id} scale={s} usuarioLogado={usuarioLogado} isPast />
             ))}
           </div>
         </>
@@ -2486,9 +2884,10 @@ const ScalesTab = ({ scales, user, onConfirm, onEdit, onDelete }: { scales: Scal
   );
 };
 
-const MembersTab = ({ users, currentUser, onApprove, onPromote }: { users: User[], currentUser: User, onApprove: any, onPromote: any }) => {
+const MembersTab = ({ users, currentUser, onApprove, onPromote, onDeleteMember, onEditAreas }: { users: User[], currentUser: User, onApprove: any, onPromote: any, onDeleteMember: any, onEditAreas: any }) => {
   const pendingUsers = users.filter(u => !u.aprovado);
   const approvedUsers = users.filter(u => u.aprovado);
+  const podeGerenciar = currentUser?.papel === 'admin' || currentUser?.papel === 'leader';
 
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
@@ -2521,20 +2920,59 @@ const MembersTab = ({ users, currentUser, onApprove, onPromote }: { users: User[
           <div>
             <p style={{ fontWeight: 600 }}>{u.nome}</p>
             <p style={{ fontSize: '12px', color: COLORS.gray }}>{u.papel === 'admin' ? 'Administrador' : u.papel === 'leader' ? 'Líder' : 'Voluntário'}</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+              {u.areas.map(a => <span key={a} style={{ fontSize: '9px', backgroundColor: COLORS.lightGray, padding: '1px 4px', borderRadius: '3px' }}>{a}</span>)}
+            </div>
           </div>
-          {currentUser?.papel === 'admin' && u.id !== currentUser.id && (
-            <Button variant="outline" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={() => onPromote(u.id)}>
-              {u.papel === 'volunteer' ? 'Tornar Líder' : 'Tornar Voluntário'}
-            </Button>
-          )}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {podeGerenciar && u.id !== currentUser.id && (
+              <>
+                <button
+                  onClick={() => onEditAreas(u)}
+                  style={{
+                    background: "none",
+                    border: "1px solid #e5e5ea",
+                    borderRadius: "8px",
+                    padding: "5px 10px",
+                    cursor: "pointer",
+                    color: "#1d1d1f",
+                    fontSize: "12px",
+                    fontWeight: "500",
+                  }}
+                >
+                  Editar áreas
+                </button>
+                <button
+                  onClick={() => onDeleteMember(u)}
+                  style={{
+                    background: "none",
+                    border: "1px solid #e5e5ea",
+                    borderRadius: "8px",
+                    padding: "5px 10px",
+                    cursor: "pointer",
+                    color: "#ff3b30",
+                    fontSize: "12px",
+                    fontWeight: "500",
+                  }}
+                >
+                  Excluir
+                </button>
+              </>
+            )}
+            {currentUser?.papel === 'admin' && u.id !== currentUser.id && (
+              <Button variant="outline" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={() => onPromote(u.id)}>
+                {u.papel === 'volunteer' ? 'Tornar Líder' : 'Tornar Voluntário'}
+              </Button>
+            )}
+          </div>
         </div>
       ))}
     </div>
   );
 };
 
-const NotifsTab = ({ notifications, user, onMarkAsRead, onNavigateToMembers, onViewCandidacy }: { notifications: Notification[], user: User, onMarkAsRead: any, onNavigateToMembers: any, onViewCandidacy: any }) => {
-  const myNotifs = notifications.filter(n => n.userId === user?.id);
+const NotifsTab = ({ notifications, usuarioLogado, onMarkAsRead, onNavigateToMembers, onViewCandidacy }: { notifications: Notification[], usuarioLogado: User, onMarkAsRead: any, onNavigateToMembers: any, onViewCandidacy: any }) => {
+  const myNotifs = notifications.filter(n => n.userId === usuarioLogado?.id);
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       {myNotifs.length === 0 ? (
@@ -2567,21 +3005,21 @@ const NotifsTab = ({ notifications, user, onMarkAsRead, onNavigateToMembers, onV
   );
 };
 
-const ProfileTab = ({ user, users, setUsers, setUser, onLogout }: { user: User, users: User[], setUsers: any, setUser: any, onLogout: any }) => {
+const ProfileTab = ({ usuarioLogado, users, setUsers, setUser, onLogout }: { usuarioLogado: User, users: User[], setUsers: any, setUser: any, onLogout: any }) => {
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       <div style={{ ...styles.card, backgroundColor: COLORS.black, color: 'white', textAlign: 'center', padding: '30px 20px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: 'none' }}>
         <ProfilePhotoUpload
-          usuarioLogado={user}
+          usuarioLogado={usuarioLogado}
           onFotoAtualizada={async (base64: string) => {
-            await salvarFotoPerfil(base64, user.id, setUser);
+            await salvarFotoPerfil(base64, usuarioLogado.id, setUser);
             // Sincronizar lista de usuários também
             const updated = await DB.getUsers();
             setUsers(updated);
           }}
         />
-        <h2 style={{ fontSize: '22px', fontWeight: 700, marginTop: '12px' }}>{user?.nome}</h2>
-        <p style={{ opacity: 0.7, fontSize: '14px', marginTop: '4px' }}>{user?.areas.join(' • ')}</p>
+        <h2 style={{ fontSize: '22px', fontWeight: 700, marginTop: '12px' }}>{usuarioLogado?.nome}</h2>
+        <p style={{ opacity: 0.7, fontSize: '14px', marginTop: '4px' }}>{usuarioLogado?.areas.join(' • ')}</p>
       </div>
 
       <div style={styles.card}>
@@ -2589,15 +3027,15 @@ const ProfileTab = ({ user, users, setUsers, setUser, onLogout }: { user: User, 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: COLORS.gray }}>Email</span>
-            <span>{user?.email}</span>
+            <span>{usuarioLogado?.email}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: COLORS.gray }}>Função</span>
-            <span style={{ textTransform: 'capitalize' }}>{user?.papel === 'admin' ? 'Administrador' : user?.papel === 'leader' ? 'Líder' : 'Voluntário'}</span>
+            <span style={{ textTransform: 'capitalize' }}>{usuarioLogado?.papel === 'admin' ? 'Administrador' : usuarioLogado?.papel === 'leader' ? 'Líder' : 'Voluntário'}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: COLORS.gray }}>Membro desde</span>
-            <span>{new Date(user?.dataEntrada || '').toLocaleDateString('pt-BR')}</span>
+            <span>{new Date(usuarioLogado?.dataEntrada || '').toLocaleDateString('pt-BR')}</span>
           </div>
         </div>
       </div>
@@ -2611,13 +3049,13 @@ const ProfileTab = ({ user, users, setUsers, setUser, onLogout }: { user: User, 
 
 // --- Sub-components ---
 
-const ScaleCard = ({ scale, user, onConfirm, onEdit, onDelete, isPast = false }: any) => {
+const ScaleCard = ({ scale, usuarioLogado, onConfirm, onEdit, onDelete, isPast = false }: any) => {
   const [isHoveredConfirm, setIsHoveredConfirm] = useState(false);
   const [isHoveredDecline, setIsHoveredDecline] = useState(false);
 
-  const myPos = Object.keys(scale.posicoes).find(key => scale.posicoes[key] === user.id);
+  const myPos = Object.keys(scale.posicoes).find(key => scale.posicoes[key] === usuarioLogado.id);
   const formattedPos = myPos === 'corte' ? 'Corte' : myPos?.replace('camera', 'Câmera ');
-  const myStatus = scale.confirmacoes[user.id] || 'pendente';
+  const myStatus = scale.confirmacoes[usuarioLogado.id] || 'pendente';
 
   const dateFormatted = new Date(scale.data).toLocaleDateString("pt-BR", { day:"2-digit", month:"long", year:"numeric" });
 
