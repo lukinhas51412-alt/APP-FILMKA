@@ -48,6 +48,7 @@ interface User {
   papel: Role;
   fotoPerfil?: string;
   dataEntrada: string;
+  boasVindasExibido?: boolean;
 }
 
 interface Scale {
@@ -441,6 +442,358 @@ const ProfilePhotoUpload = ({ usuarioLogado, onFotoAtualizada }: any) => {
   );
 };
 
+const TIPO = {
+  titulo:    { fontSize: "22px", fontWeight: "700", color: "#1d1d1f", letterSpacing: "-0.3px" },
+  subtitulo: { fontSize: "17px", fontWeight: "600", color: "#1d1d1f" },
+  corpo:     { fontSize: "15px", fontWeight: "400", color: "#1d1d1f", lineHeight: "1.5" },
+  caption:   { fontSize: "13px", fontWeight: "400", color: "#6e6e73" },
+  mini:      { fontSize: "11px", fontWeight: "400", color: "#6e6e73" },
+  label:     { fontSize: "12px", fontWeight: "500", color: "#6e6e73", textTransform: "uppercase", letterSpacing: "0.5px" },
+};
+
+const SPACE = {
+  xs:  "4px",
+  sm:  "8px",
+  md:  "16px",
+  lg:  "24px",
+  xl:  "32px",
+  xxl: "48px",
+};
+
+const cardStyle = {
+  background: "white",
+  borderRadius: "14px",
+  border: "1px solid #e5e5ea",
+  padding: "16px",
+  marginBottom: "12px",
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "13px 14px",
+  borderRadius: "12px",
+  border: "1px solid #e5e5ea",
+  fontSize: "16px",
+  color: "#1d1d1f",
+  background: "white",
+  outline: "none",
+  boxSizing: "border-box",
+  fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+  WebkitAppearance: "none",
+};
+
+const btnPrimario = {
+  width: "100%",
+  padding: "14px",
+  borderRadius: "12px",
+  border: "none",
+  background: "#1d1d1f",
+  color: "white",
+  fontSize: "16px",
+  fontWeight: "600",
+  cursor: "pointer",
+  minHeight: "44px",
+  fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+};
+
+const btnSecundario = {
+  ...btnPrimario,
+  background: "white",
+  color: "#1d1d1f",
+  border: "1px solid #e5e5ea",
+};
+
+const btnDestrutivo = {
+  ...btnPrimario,
+  background: "#ff3b30",
+};
+
+const btnVerde = {
+  ...btnPrimario,
+  background: "#1a6b3c",
+};
+
+const badgeStyle = (tipo: any) => {
+  const estilos: any = {
+    confirmado:           { bg: "#e8f5e9", color: "#1a6b3c" },
+    indisponivel:         { bg: "#fce8e8", color: "#c0392b" },
+    pendente:             { bg: "#f5f5f7", color: "#6e6e73" },
+    aguardando_validacao: { bg: "#fff8e1", color: "#f39c12" },
+    serviu:               { bg: "#e8f5e9", color: "#1a6b3c" },
+    furou:                { bg: "#fce8e8", color: "#c0392b" },
+    admin:                { bg: "#f5f5f7", color: "#1d1d1f" },
+    leader:               { bg: "#f5f5f7", color: "#1d1d1f" },
+    volunteer:            { bg: "#f5f5f7", color: "#6e6e73" },
+    pending:              { bg: "#fff8e1", color: "#f39c12" },
+  };
+  const e = estilos[tipo] || estilos.pendente;
+  return {
+    display: "inline-block",
+    padding: "3px 10px",
+    borderRadius: "20px",
+    fontSize: "12px",
+    fontWeight: "600",
+    background: e.bg,
+    color: e.color,
+  };
+};
+
+const SecaoLabel = ({ titulo }: { titulo: string }) => (
+  <p style={{
+    fontSize: "12px",
+    fontWeight: "500",
+    color: "#6e6e73",
+    textTransform: "uppercase",
+    letterSpacing: "0.5px",
+    margin: "24px 0 8px 4px",
+  }}>
+    {titulo}
+  </p>
+);
+
+const TelaVazia = ({ icone, titulo, descricao, botao, onBotao }: any) => (
+  <div style={{
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "48px 24px",
+    textAlign: "center",
+    gap: "12px",
+    animation: "fadeIn 0.2s ease",
+  }}>
+    <div style={{ fontSize: "40px", marginBottom: "4px" }}>{icone}</div>
+    <p style={{
+      fontSize: "17px",
+      fontWeight: "600",
+      color: "#1d1d1f",
+      margin: 0,
+    }}>{titulo}</p>
+    <p style={{
+      fontSize: "14px",
+      color: "#6e6e73",
+      margin: 0,
+      lineHeight: "1.5",
+      maxWidth: "260px",
+    }}>{descricao}</p>
+    {botao && (
+      <button
+        onClick={onBotao}
+        style={{
+          marginTop: "8px",
+          padding: "11px 24px",
+          borderRadius: "12px",
+          border: "none",
+          background: "#1d1d1f",
+          color: "white",
+          fontSize: "14px",
+          fontWeight: "600",
+          cursor: "pointer",
+          fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+        }}
+      >
+        {botao}
+      </button>
+    )}
+  </div>
+);
+
+const Toast = ({ mensagem, tipo, visivel }: any) => {
+  if (!visivel) return null;
+  const cores: any = {
+    sucesso: { bg: "#1a6b3c", icon: "✅" },
+    erro:    { bg: "#c0392b", icon: "❌" },
+    info:    { bg: "#1d1d1f", icon: "ℹ️" },
+  };
+  const { bg, icon } = cores[tipo] || cores.info;
+  return (
+    <div style={{
+      position: "fixed",
+      top: "70px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      background: bg,
+      color: "white",
+      padding: "12px 20px",
+      borderRadius: "12px",
+      fontSize: "14px",
+      fontWeight: "500",
+      zIndex: 99999,
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+      maxWidth: "340px",
+      width: "90%",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+      animation: "fadeIn 0.2s ease",
+    }}>
+      <span>{icon}</span>
+      <span>{mensagem}</span>
+    </div>
+  );
+};
+
+const BotaoAcao = ({ label, labelCarregando, onClick, carregando, style, variant = 'primary' }: any) => {
+  const baseStyle = variant === 'secondary' ? btnSecundario : variant === 'destructive' ? btnDestrutivo : variant === 'green' ? btnVerde : btnPrimario;
+  return (
+    <button
+      onClick={onClick}
+      disabled={carregando}
+      style={{
+        ...baseStyle,
+        ...style,
+        opacity: carregando ? 0.7 : 1,
+        cursor: carregando ? "not-allowed" : "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "8px",
+        position: "relative",
+      }}
+    >
+      {carregando && (
+        <div style={{
+          width: "14px", height: "14px",
+          border: "2px solid rgba(255,255,255,0.4)",
+          borderTopColor: "white",
+          borderRadius: "50%",
+          animation: "spin 0.7s linear infinite",
+          flexShrink: 0,
+        }}/>
+      )}
+      {carregando ? (labelCarregando || label) : label}
+    </button>
+  );
+};
+
+const useToast = () => {
+  const [toast, setToast] = React.useState({ visivel: false, mensagem: "", tipo: "info" });
+
+  const mostrarToast = (mensagem: string, tipo: string = "info", duracao: number = 3000) => {
+    setToast({ visivel: true, mensagem, tipo });
+    setTimeout(() => setToast(prev => ({ ...prev, visivel: false })), duracao);
+  };
+
+  return { toast, mostrarToast };
+};
+
+const TelaBoasVindas = ({ usuarioLogado, onContinuar }: any) => {
+  const [animando, setAnimando] = React.useState(true);
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setAnimando(false), 600);
+    return () => clearTimeout(t);
+  }, []);
+
+  const primeiroNome = usuarioLogado?.nome?.split(" ")[0] || "Membro";
+
+  return (
+    <div style={{
+      minHeight: "100dvh",
+      background: "#1d1d1f",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "32px 24px",
+      textAlign: "center",
+      animation: "fadeIn 0.5s ease",
+    }}>
+
+      {/* Ícone animado */}
+      <div style={{
+        width: "80px", height: "80px",
+        borderRadius: "50%",
+        background: "#1a6b3c",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        marginBottom: "32px",
+        transform: animando ? "scale(0.8)" : "scale(1)",
+        transition: "transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)",
+      }}>
+        <svg width="40" height="40" viewBox="0 0 24 24"
+          fill="none" stroke="white" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 6L9 17l-5-5"
+            style={{
+              strokeDasharray: 100,
+              strokeDashoffset: animando ? 100 : 0,
+              transition: "stroke-dashoffset 0.6s ease 0.2s",
+            }}
+          />
+        </svg>
+      </div>
+
+      {/* Texto */}
+      <h1 style={{
+        fontSize: "28px",
+        fontWeight: "700",
+        color: "white",
+        margin: "0 0 12px",
+        letterSpacing: "-0.5px",
+      }}>
+        Bem-vindo, {primeiroNome}!
+      </h1>
+
+      <p style={{
+        fontSize: "16px",
+        color: "rgba(255,255,255,0.65)",
+        lineHeight: "1.6",
+        margin: "0 0 48px",
+        maxWidth: "280px",
+      }}>
+        Seu cadastro foi aprovado. Você agora faz parte da equipe de Filmagem do Kombo Alpha.
+      </p>
+
+      {/* Áreas */}
+      {usuarioLogado?.areas?.length > 0 && (
+        <div style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "8px",
+          justifyContent: "center",
+          marginBottom: "48px",
+        }}>
+          {usuarioLogado.areas.map((area: any) => (
+            <span key={area} style={{
+              padding: "6px 14px",
+              borderRadius: "20px",
+              background: "rgba(255,255,255,0.1)",
+              color: "rgba(255,255,255,0.85)",
+              fontSize: "13px",
+              fontWeight: "500",
+            }}>
+              {area}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Botão */}
+      <button
+        onClick={onContinuar}
+        style={{
+          padding: "15px 48px",
+          borderRadius: "14px",
+          border: "none",
+          background: "white",
+          color: "#1d1d1f",
+          fontSize: "16px",
+          fontWeight: "700",
+          cursor: "pointer",
+          minHeight: "44px",
+          fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+          letterSpacing: "-0.2px",
+        }}
+      >
+        Acessar o app →
+      </button>
+
+    </div>
+  );
+};
+
 // --- Constants & Styles ---
 
 const EMAILS_AUTORIZADOS = [
@@ -461,6 +814,25 @@ const EMAILS_AUTORIZADOS = [
   "pietro.gabriel@filmagem.com",
   "arhur.miguel@filmagem.com",
 ];
+
+const SENHAS_PADRAO: Record<string, string> = {
+  "lucas.mansur@filmagem.com":    "lucas@123",
+  "felipe.augusto@filmagem.com":  "felipe@123",
+  "felipe.luiz@filmagem.com":     "felipe@123",
+  "gabriel@filmagem.com":         "gabriel@123",
+  "gabriel.mares@filmagem.com":   "gabriel@123",
+  "gibi@filmagem.com":            "gibi@123",
+  "helena.lomeu@filmagem.com":    "helena@123",
+  "henrique.marcos@filmagem.com": "henrique@123",
+  "joao.gabriel@filmagem.com":    "joao@123",
+  "joao.pedro@filmagem.com":      "joao@123",
+  "kaue@filmagem.com":            "kaue@123",
+  "laura@filmagem.com":           "laura@123",
+  "matheus@filmagem.com":         "matheus@123",
+  "pedro@filmagem.com":           "pedro@123",
+  "pietro.gabriel@filmagem.com":  "pietro@123",
+  "arhur.miguel@filmagem.com":    "arhur@123",
+};
 
 const LogoFilmka = ({ size = "large" }) => {
   const isSmall = size === "small";
@@ -810,6 +1182,7 @@ const StatusTag = ({ status }: { status: string }) => {
 // --- Main App ---
 
 export default function App() {
+  const { toast, mostrarToast } = useToast();
   const [emailLogin, setEmailLogin] = React.useState("");
   const [senhaLogin, setSenhaLogin] = React.useState("");
   const [erroLogin, setErroLogin] = React.useState("");
@@ -823,6 +1196,7 @@ export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeTab, setActiveTab] = useState<'calendar' | 'scales' | 'members' | 'notifs' | 'messages' | 'profile'>('scales');
+  const [processando, setProcessando] = useState(false);
 
   // --- Utility Functions for Notifications ---
   const buscarLideresEAdmins = async () => {
@@ -1230,10 +1604,16 @@ export default function App() {
 
       if (usuario.papel === "admin" || usuario.papel === "leader") {
         setTela("dashboardAdmin");
+        mostrarToast(`Bem-vindo, ${usuario.nome}!`, "sucesso");
         return;
       }
 
-      setTela("dashboardVoluntario");
+      if (!usuario.boasVindasExibido) {
+        setTela("boasVindas");
+      } else {
+        setTela("dashboardVoluntario");
+        mostrarToast(`Bem-vindo de volta, ${usuario.nome}!`, "sucesso");
+      }
 
     } catch (err) {
       console.error("❌ Erro no login:", err);
@@ -1244,51 +1624,65 @@ export default function App() {
   };
 
   const handleRegister = async () => {
-    setErroCadastro(null);
-    if (!regNome || !regEmail || !regSenha || regAreas.length === 0) {
-      alert('Preencha todos os campos e selecione ao menos uma área.');
-      return;
-    }
+    try {
+      const emailNormalizado = regEmail.trim().toLowerCase();
+      const senhaNormalizada = regSenha.trim();
 
-    const emailDigitado = regEmail.trim().toLowerCase();
+      // 1. Verificar se email é autorizado
+      if (!EMAILS_AUTORIZADOS.includes(emailNormalizado)) {
+        setErroCadastro("Este e-mail não está autorizado. Entre em contato com a liderança.");
+        return;
+      }
 
-    if (!EMAILS_AUTORIZADOS.includes(emailDigitado)) {
-      setErroCadastro(
-        "Este e-mail não está autorizado a criar uma conta. Entre em contato com a liderança."
+      // 2. Verificar se a senha bate com a senha padrão
+      const senhaPadrao = SENHAS_PADRAO[emailNormalizado];
+      if (senhaNormalizada !== senhaPadrao) {
+        setErroCadastro(
+          `Senha incorreta. Use a senha padrão fornecida pela liderança para o primeiro acesso.`
+        );
+        return;
+      }
+
+      // 3. Verificar se email já está cadastrado
+      const users = await DB.getUsers();
+      const jaExiste = users.some(u => u.email.trim().toLowerCase() === emailNormalizado);
+      if (jaExiste) {
+        setErroCadastro("Este e-mail já possui uma conta cadastrada.");
+        return;
+      }
+
+      // 4. Criar usuário
+      const novoUsuario: User = {
+        id: `user-${Date.now()}`,
+        nome: regNome.trim(),
+        email: emailNormalizado,
+        senha: senhaNormalizada,
+        dataNascimento: regNasc,
+        areas: regAreas,
+        papel: "pending",
+        aprovado: false,
+        fotoPerfil: undefined,
+        dataEntrada: new Date().toISOString(),
+        boasVindasExibido: false,
+      };
+
+      await DB.addItem(DB.KEYS.USERS, novoUsuario);
+      setUsers(prev => [...prev, novoUsuario]);
+
+      // 5. Notificar líderes e admins
+      const ids = await buscarLideresEAdmins();
+      await criarNotificacoes(
+        ids,
+        `Novo membro aguardando aprovação: ${novoUsuario.nome}`
       );
-      return;
+
+      setTela("espera");
+      setUsuarioLogado(novoUsuario);
+
+    } catch (err) {
+      console.error("Erro no cadastro:", err);
+      setErroCadastro("Erro ao criar conta. Tente novamente.");
     }
-
-    if (users.find(u => u.email.trim().toLowerCase() === emailDigitado)) {
-      setErroCadastro("Este e-mail já possui uma conta cadastrada.");
-      return;
-    }
-
-    if (regSenha.length < 6) {
-      alert('A senha deve ter no mínimo 6 caracteres.');
-      return;
-    }
-
-    const newUser: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      nome: regNome,
-      email: emailDigitado,
-      senha: regSenha,
-      dataNascimento: regNasc,
-      areas: regAreas,
-      aprovado: false,
-      papel: 'pending',
-      dataEntrada: new Date().toISOString(),
-    };
-
-    await DB.addItem(DB.KEYS.USERS, newUser);
-    setUsers(prev => [...prev, newUser]);
-    
-    const ids = await buscarLideresEAdmins();
-    await criarNotificacoes(ids, `Novo membro aguardando aprovação: ${newUser.nome}`);
-
-    setUsuarioLogado(newUser);
-    setTela('espera');
   };
 
   const handleApply = async () => {
@@ -1329,15 +1723,28 @@ export default function App() {
     }
   };
 
+  const handleBoasVindasContinuar = async () => {
+    if (!usuarioLogado) return;
+    try {
+      await DB.updateItem(DB.KEYS.USERS, usuarioLogado.id, { boasVindasExibido: true });
+      setUsuarioLogado({ ...usuarioLogado, boasVindasExibido: true });
+      setTela("dashboardVoluntario");
+      mostrarToast("Bem-vindo à equipe!", "sucesso");
+    } catch (err) {
+      console.error("Erro ao atualizar boas-vindas:", err);
+      setTela("dashboardVoluntario");
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await DB.delete(DB.KEYS.SESSION);
-    } catch (err) {
-      console.error("Erro ao limpar sessão:", err);
-    } finally {
       setUsuarioLogado(null);
-      setTela('landing');
-      setActiveTab('scales');
+      setTela("landing");
+      setActiveTab("scales");
+      mostrarToast("Sessão encerrada.", "info");
+    } catch (err) {
+      console.error("Erro ao fazer logout:", err);
     }
   };
 
@@ -1756,6 +2163,14 @@ export default function App() {
       <Input label="Data de nascimento" type="date" value={regNasc} onChange={setRegNasc} />
       <Input label="Email" value={regEmail} onChange={setRegEmail} placeholder="seu@email.com" />
       <Input label="Senha" type="password" value={regSenha} onChange={setRegSenha} placeholder="Mínimo 6 caracteres" />
+      <p style={{
+        fontSize: "12px",
+        color: "#6e6e73",
+        margin: "4px 0 0 4px",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+      }}>
+        Use a senha padrão fornecida pela liderança para o primeiro acesso.
+      </p>
       {erroCadastro && <p style={{ color: COLORS.red, fontSize: '14px', marginTop: '10px', marginBottom: '10px' }}>{erroCadastro}</p>}
       
       <div style={{ marginBottom: '20px' }}>
@@ -1826,8 +2241,15 @@ export default function App() {
     const unreadMessagesCount = messages.filter(m => m.destinatarioId === usuarioLogado?.id && !m.lida).length;
     
     return (
-      <div style={styles.appWrapper}>
-        <div style={styles.topBar}>
+      <div style={{ ...styles.appWrapper, overflow: 'hidden' }}>
+        <div style={{
+          ...styles.topBar,
+          position: 'fixed',
+          top: 0,
+          width: '100%',
+          maxWidth: '480px',
+          zIndex: 1000,
+        }}>
           <div style={{ width: '80px' }}>
             <LogoFilmka size="small" />
           </div>
@@ -1848,7 +2270,15 @@ export default function App() {
           </div>
         </div>
 
-        <div style={styles.content}>
+        <div style={{
+          ...styles.content,
+          paddingTop: '80px',
+          paddingBottom: '100px',
+          height: '100dvh',
+          overflowY: 'auto',
+          boxSizing: 'border-box',
+          WebkitOverflowScrolling: 'touch',
+        }}>
           {activeTab === 'calendar' && <CalendarTab scales={scales} usuarioLogado={usuarioLogado} users={users} ranking={ranking} onOpenRanking={() => setIsRankingModalOpen(true)} />}
           {activeTab === 'scales' && (
             <ScalesTab 
@@ -1909,7 +2339,15 @@ export default function App() {
           )}
         </div>
 
-        <div style={styles.bottomNav}>
+        <div style={{
+          ...styles.bottomNav,
+          position: 'fixed',
+          bottom: 0,
+          width: '100%',
+          maxWidth: '480px',
+          zIndex: 1000,
+          paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
+        }}>
           <div style={{ ...styles.navItem, ...(activeTab === 'calendar' ? styles.navItemActive : {}) }} onClick={() => setActiveTab('calendar')}>
             <CalendarIcon size={24} />
             <span style={styles.navLabel}>Calendário</span>
@@ -2091,10 +2529,12 @@ export default function App() {
 
   return (
     <div style={styles.container}>
+      <Toast mensagem={toast.mensagem} tipo={toast.tipo} visivel={toast.visivel} />
       {tela === 'landing' && renderLanding()}
       {tela === 'login' && renderLogin()}
       {tela === 'register' && renderRegister()}
       {tela === 'espera' && renderWaiting()}
+      {tela === 'boasVindas' && <TelaBoasVindas usuarioLogado={usuarioLogado} onContinuar={handleBoasVindasContinuar} />}
       {tela === 'dashboardAdmin' && renderDashboard()}
       {tela === 'dashboardVoluntario' && renderDashboard()}
     </div>
@@ -2304,43 +2744,51 @@ const AvisosTab = ({ posts, notifications, usuarioLogado, users, onPost, onDelet
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {sortedPosts.map((post) => {
-              const isRead = post.lida.includes(usuarioLogado.id);
-              return (
-                <div 
-                  key={post.id} 
-                  onClick={() => onMarkRead(post.id)}
-                  style={{ 
-                    display: 'flex', 
-                    gap: '12px', 
-                    padding: '16px', 
-                    borderBottom: `1px solid ${COLORS.border}`,
-                    cursor: 'pointer',
-                    backgroundColor: isRead ? 'transparent' : 'rgba(26, 107, 60, 0.05)'
-                  }}
-                >
-                  <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: COLORS.lightGray, overflow: 'hidden', flexShrink: 0 }}>
-                    {post.autorFoto ? <img src={post.autorFoto} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" /> : <UserIcon size={20} style={{ margin: '10px' }} />}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 700, fontSize: '15px' }}>{post.autorNome}</span>
-                        <span style={{ color: COLORS.gray, fontSize: '12px', backgroundColor: COLORS.lightGray, padding: '1px 6px', borderRadius: '4px' }}>{getAutorFuncao(post.autorId)}</span>
-                        <span style={{ color: COLORS.gray, fontSize: '13px' }}>· {getRelativeTime(post.data)}</span>
-                      </div>
-                      {isAdminOrLeader && post.autorId === usuarioLogado.id && (
-                        <button onClick={(e) => { e.stopPropagation(); onDeletePost(post.id); }} style={{ background: 'none', border: 'none', color: COLORS.gray, cursor: 'pointer' }}>
-                          <Trash2 size={16} />
-                        </button>
-                      )}
+            {sortedPosts.length === 0 ? (
+              <TelaVazia
+                icone="📢"
+                titulo="Nenhum aviso"
+                descricao="Ainda não há avisos publicados para a equipe."
+              />
+            ) : (
+              sortedPosts.map((post) => {
+                const isRead = post.lida.includes(usuarioLogado.id);
+                return (
+                  <div 
+                    key={post.id} 
+                    onClick={() => onMarkRead(post.id)}
+                    style={{ 
+                      display: 'flex', 
+                      gap: '12px', 
+                      padding: '16px', 
+                      borderBottom: `1px solid ${COLORS.border}`,
+                      cursor: 'pointer',
+                      backgroundColor: isRead ? 'transparent' : 'rgba(26, 107, 60, 0.05)'
+                    }}
+                  >
+                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: COLORS.lightGray, overflow: 'hidden', flexShrink: 0 }}>
+                      {post.autorFoto ? <img src={post.autorFoto} style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" /> : <UserIcon size={20} style={{ margin: '10px' }} />}
                     </div>
-                    <p style={{ fontSize: '15px', lineHeight: '1.4', color: COLORS.black }}>{post.conteudo}</p>
-                    <LikeButton post={post} currentUserId={usuarioLogado.id} onToggle={onToggleLike} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700, fontSize: '15px' }}>{post.autorNome}</span>
+                          <span style={{ color: COLORS.gray, fontSize: '12px', backgroundColor: COLORS.lightGray, padding: '1px 6px', borderRadius: '4px' }}>{getAutorFuncao(post.autorId)}</span>
+                          <span style={{ color: COLORS.gray, fontSize: '13px' }}>· {getRelativeTime(post.data)}</span>
+                        </div>
+                        {isAdminOrLeader && post.autorId === usuarioLogado.id && (
+                          <button onClick={(e) => { e.stopPropagation(); onDeletePost(post.id); }} style={{ background: 'none', border: 'none', color: COLORS.gray, cursor: 'pointer' }}>
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </div>
+                      <p style={{ fontSize: '15px', lineHeight: '1.4', color: COLORS.black }}>{post.conteudo}</p>
+                      <LikeButton post={post} currentUserId={usuarioLogado.id} onToggle={onToggleLike} />
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </>
       ) : (
@@ -2854,9 +3302,13 @@ const ScalesTab = ({ scales, usuarioLogado, users, onConfirm, onEdit, onDelete, 
         </div>
       )}
 
-      <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '16px' }}>Próximas Escalas</h3>
+      <SecaoLabel titulo="Próximas Escalas" />
       {upcomingScales.length === 0 ? (
-        <p style={{ textAlign: 'center', color: COLORS.gray, padding: '40px 0' }}>Nenhuma escala agendada.</p>
+        <TelaVazia
+          icone="📅"
+          titulo="Nenhuma escala futura"
+          descricao="Você não tem escalas agendadas para os próximos dias."
+        />
       ) : (
         <VirtualList items={upcomingScales} renderItem={(s: Scale) => (
           <ScaleCard 
@@ -2870,15 +3322,19 @@ const ScalesTab = ({ scales, usuarioLogado, users, onConfirm, onEdit, onDelete, 
         )} />
       )}
 
-      {pastScales.length > 0 && (
-        <>
-          <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '24px 0 16px' }}>Histórico</h3>
-          <div style={{ opacity: 0.6 }}>
-            {pastScales.map(s => (
-              <ScaleCard key={s.id} scale={s} usuarioLogado={usuarioLogado} isPast />
-            ))}
-          </div>
-        </>
+      <SecaoLabel titulo="Histórico" />
+      {pastScales.length === 0 ? (
+        <TelaVazia
+          icone="📜"
+          titulo="Histórico vazio"
+          descricao="Ainda não há registros de escalas passadas."
+        />
+      ) : (
+        <div style={{ opacity: 0.6 }}>
+          {pastScales.map(s => (
+            <ScaleCard key={s.id} scale={s} usuarioLogado={usuarioLogado} isPast />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -2893,9 +3349,9 @@ const MembersTab = ({ users, currentUser, onApprove, onPromote, onDeleteMember, 
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       {pendingUsers.length > 0 && (
         <div style={{ marginBottom: '30px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '12px', color: COLORS.red }}>Pendentes ({pendingUsers.length})</h3>
+          <SecaoLabel titulo={`Pendentes (${pendingUsers.length})`} />
           {pendingUsers.map(u => (
-            <div key={u.id} style={styles.card}>
+            <div key={u.id} style={cardStyle}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                 <div>
                   <p style={{ fontWeight: 700 }}>{u.nome}</p>
@@ -2906,29 +3362,69 @@ const MembersTab = ({ users, currentUser, onApprove, onPromote, onDeleteMember, 
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <Button variant="success" style={{ flex: 1, padding: '8px' }} onClick={() => onApprove(u.id, true)}>Aprovar</Button>
-                <Button variant="outline" style={{ flex: 1, padding: '8px', color: COLORS.red }} onClick={() => onApprove(u.id, false)}>Recusar</Button>
+                <BotaoAcao label="Aprovar" variant="green" style={{ flex: 1, padding: '8px' }} onClick={() => onApprove(u.id, true)} />
+                <BotaoAcao label="Recusar" variant="destructive" style={{ flex: 1, padding: '8px' }} onClick={() => onApprove(u.id, false)} />
               </div>
             </div>
           ))}
         </div>
       )}
 
-      <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '12px' }}>Membros Aprovados ({approvedUsers.length})</h3>
-      {approvedUsers.map(u => (
-        <div key={u.id} style={{ ...styles.card, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <p style={{ fontWeight: 600 }}>{u.nome}</p>
-            <p style={{ fontSize: '12px', color: COLORS.gray }}>{u.papel === 'admin' ? 'Administrador' : u.papel === 'leader' ? 'Líder' : 'Voluntário'}</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
-              {u.areas.map(a => <span key={a} style={{ fontSize: '9px', backgroundColor: COLORS.lightGray, padding: '1px 4px', borderRadius: '3px' }}>{a}</span>)}
+      <SecaoLabel titulo={`Membros Aprovados (${approvedUsers.length})`} />
+      {approvedUsers.length === 0 ? (
+        <TelaVazia
+          icone="👥"
+          titulo="Nenhum membro"
+          descricao="Ainda não há membros aprovados no sistema."
+        />
+      ) : (
+        approvedUsers.map(u => (
+          <div key={u.id} style={{ ...cardStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <p style={{ fontWeight: 600 }}>{u.nome}</p>
+              <p style={{ fontSize: '12px', color: COLORS.gray }}>{u.papel === 'admin' ? 'Administrador' : u.papel === 'leader' ? 'Líder' : 'Voluntário'}</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                {u.areas.map(a => <span key={a} style={{ fontSize: '9px', backgroundColor: COLORS.lightGray, padding: '1px 4px', borderRadius: '3px' }}>{a}</span>)}
+              </div>
             </div>
-          </div>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {podeGerenciar && u.id !== currentUser.id && (
-              <>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {podeGerenciar && u.id !== currentUser.id && (
+                <>
+                  <button
+                    onClick={() => onEditAreas(u)}
+                    style={{
+                      background: "none",
+                      border: "1px solid #e5e5ea",
+                      borderRadius: "8px",
+                      padding: "5px 10px",
+                      cursor: "pointer",
+                      color: "#1d1d1f",
+                      fontSize: "12px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Editar áreas
+                  </button>
+                  <button
+                    onClick={() => onDeleteMember(u)}
+                    style={{
+                      background: "none",
+                      border: "1px solid #e5e5ea",
+                      borderRadius: "8px",
+                      padding: "5px 10px",
+                      cursor: "pointer",
+                      color: "#ff3b30",
+                      fontSize: "12px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Excluir
+                  </button>
+                </>
+              )}
+              {currentUser?.papel === 'admin' && u.id !== currentUser.id && (
                 <button
-                  onClick={() => onEditAreas(u)}
+                  onClick={() => onPromote(u.id)}
                   style={{
                     background: "none",
                     border: "1px solid #e5e5ea",
@@ -2940,33 +3436,13 @@ const MembersTab = ({ users, currentUser, onApprove, onPromote, onDeleteMember, 
                     fontWeight: "500",
                   }}
                 >
-                  Editar áreas
+                  {u.papel === 'volunteer' ? 'Tornar Líder' : 'Tornar Voluntário'}
                 </button>
-                <button
-                  onClick={() => onDeleteMember(u)}
-                  style={{
-                    background: "none",
-                    border: "1px solid #e5e5ea",
-                    borderRadius: "8px",
-                    padding: "5px 10px",
-                    cursor: "pointer",
-                    color: "#ff3b30",
-                    fontSize: "12px",
-                    fontWeight: "500",
-                  }}
-                >
-                  Excluir
-                </button>
-              </>
-            )}
-            {currentUser?.papel === 'admin' && u.id !== currentUser.id && (
-              <Button variant="outline" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={() => onPromote(u.id)}>
-                {u.papel === 'volunteer' ? 'Tornar Líder' : 'Tornar Voluntário'}
-              </Button>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        ))
+      )}
     </div>
   );
 };
@@ -3006,6 +3482,80 @@ const NotifsTab = ({ notifications, usuarioLogado, onMarkAsRead, onNavigateToMem
 };
 
 const ProfileTab = ({ usuarioLogado, users, setUsers, setUser, onLogout }: { usuarioLogado: User, users: User[], setUsers: any, setUser: any, onLogout: any }) => {
+  const [mostrarAlterarSenha, setMostrarAlterarSenha] = React.useState(false);
+  const [senhaAtual, setSenhaAtual] = React.useState("");
+  const [novaSenha, setNovaSenha] = React.useState("");
+  const [confirmarNovaSenha, setConfirmarNovaSenha] = React.useState("");
+  const [erroSenha, setErroSenha] = React.useState("");
+  const [sucessoSenha, setSucessoSenha] = React.useState(false);
+
+  const alterarSenha = async () => {
+    setErroSenha("");
+    setSucessoSenha(false);
+
+    try {
+      const senhaAtualNorm = senhaAtual.trim();
+      const novaSenhaNorm = novaSenha.trim();
+      const confirmarNorm = confirmarNovaSenha.trim();
+
+      // Validações
+      if (!senhaAtualNorm || !novaSenhaNorm || !confirmarNorm) {
+        setErroSenha("Preencha todos os campos.");
+        return;
+      }
+
+      if (senhaAtualNorm !== usuarioLogado.senha) {
+        setErroSenha("Senha atual incorreta.");
+        return;
+      }
+
+      if (novaSenhaNorm.length < 6) {
+        setErroSenha("A nova senha deve ter pelo menos 6 caracteres.");
+        return;
+      }
+
+      if (novaSenhaNorm !== confirmarNorm) {
+        setErroSenha("As senhas não coincidem.");
+        return;
+      }
+
+      if (novaSenhaNorm === senhaAtualNorm) {
+        setErroSenha("A nova senha deve ser diferente da senha atual.");
+        return;
+      }
+
+      // Salvar nova senha no banco
+      await DB.updateItem(DB.KEYS.USERS, usuarioLogado.id, { senha: novaSenhaNorm });
+
+      // Atualizar usuário logado no estado e na sessão
+      const usuarioAtualizado = { ...usuarioLogado, senha: novaSenhaNorm };
+      setUser(usuarioAtualizado);
+
+      await DB.setSession({
+        userId: usuarioAtualizado.id,
+        email: usuarioAtualizado.email,
+        papel: usuarioAtualizado.papel,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Feedback e reset
+      setSucessoSenha(true);
+      setSenhaAtual("");
+      setNovaSenha("");
+      setConfirmarNovaSenha("");
+
+      // Fechar após 2 segundos
+      setTimeout(() => {
+        setMostrarAlterarSenha(false);
+        setSucessoSenha(false);
+      }, 2000);
+
+    } catch (err) {
+      console.error("Erro ao alterar senha:", err);
+      setErroSenha("Erro ao salvar. Tente novamente.");
+    }
+  };
+
   return (
     <div style={{ animation: 'fadeIn 0.3s ease' }}>
       <div style={{ ...styles.card, backgroundColor: COLORS.black, color: 'white', textAlign: 'center', padding: '30px 20px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: 'none' }}>
@@ -3038,6 +3588,138 @@ const ProfileTab = ({ usuarioLogado, users, setUsers, setUser, onLogout }: { usu
             <span>{new Date(usuarioLogado?.dataEntrada || '').toLocaleDateString('pt-BR')}</span>
           </div>
         </div>
+      </div>
+
+      <div style={{ marginBottom: '16px' }}>
+        <button
+          onClick={() => {
+            setMostrarAlterarSenha(v => !v);
+            setErroSenha("");
+            setSucessoSenha(false);
+            setSenhaAtual("");
+            setNovaSenha("");
+            setConfirmarNovaSenha("");
+          }}
+          style={{
+            width: "100%",
+            padding: "13px",
+            borderRadius: "12px",
+            border: "1px solid #e5e5ea",
+            background: "white",
+            fontSize: "15px",
+            fontWeight: "500",
+            color: "#1d1d1f",
+            cursor: "pointer",
+            textAlign: "left",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+          }}
+        >
+          <span>Alterar senha</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="#6e6e73" strokeWidth="1.5">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </button>
+
+        {mostrarAlterarSenha && (
+          <div style={{
+            background: "#f5f5f7",
+            borderRadius: "12px",
+            padding: "16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            marginTop: "4px",
+          }}>
+            {/* Senha atual */}
+            <input
+              type="password"
+              placeholder="Senha atual"
+              value={senhaAtual}
+              onChange={e => { setSenhaAtual(e.target.value); setErroSenha(""); setSucessoSenha(false); }}
+              style={{
+                width: "100%",
+                padding: "11px 14px",
+                borderRadius: "10px",
+                border: "1px solid #e5e5ea",
+                fontSize: "15px",
+                background: "white",
+                outline: "none",
+                boxSizing: "border-box",
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+              }}
+            />
+
+            {/* Nova senha */}
+            <input
+              type="password"
+              placeholder="Nova senha"
+              value={novaSenha}
+              onChange={e => { setNovaSenha(e.target.value); setErroSenha(""); setSucessoSenha(false); }}
+              style={{
+                width: "100%",
+                padding: "11px 14px",
+                borderRadius: "10px",
+                border: "1px solid #e5e5ea",
+                fontSize: "15px",
+                background: "white",
+                outline: "none",
+                boxSizing: "border-box",
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+              }}
+            />
+
+            {/* Confirmar nova senha */}
+            <input
+              type="password"
+              placeholder="Confirmar nova senha"
+              value={confirmarNovaSenha}
+              onChange={e => { setConfirmarNovaSenha(e.target.value); setErroSenha(""); setSucessoSenha(false); }}
+              style={{
+                width: "100%",
+                padding: "11px 14px",
+                borderRadius: "10px",
+                border: "1px solid #e5e5ea",
+                fontSize: "15px",
+                background: "white",
+                outline: "none",
+                boxSizing: "border-box",
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+              }}
+            />
+
+            {/* Erro ou sucesso */}
+            {erroSenha ? (
+              <p style={{ fontSize: "13px", color: "#ff3b30", margin: 0 }}>{erroSenha}</p>
+            ) : null}
+            {sucessoSenha ? (
+              <p style={{ fontSize: "13px", color: "#1a6b3c", margin: 0 }}>
+                ✅ Senha alterada com sucesso!
+              </p>
+            ) : null}
+
+            {/* Botão salvar */}
+            <button
+              onClick={alterarSenha}
+              style={{
+                padding: "12px",
+                borderRadius: "10px",
+                border: "none",
+                background: "#1d1d1f",
+                color: "white",
+                fontSize: "15px",
+                fontWeight: "600",
+                cursor: "pointer",
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+              }}
+            >
+              Salvar nova senha
+            </button>
+          </div>
+        )}
       </div>
 
       <Button variant="outline" style={{ width: '100%', color: COLORS.red, borderColor: COLORS.red }} onClick={onLogout}>
